@@ -32,6 +32,7 @@ Unlike a plain generated summary, the bundle retains a compact transcript as its
 - [Command reference](#command-reference)
 - [External-LLM workflow](#external-llm-workflow)
 - [FAQ](#faq)
+- [Alternative installation layouts](#alternative-installation-layouts)
 - [Development and compatibility](#development-and-compatibility)
 - [Limitations](#limitations)
 - [License](#license)
@@ -49,11 +50,16 @@ Select one or more sessions using a number, list, or range:
 ```text
 Recent Claude Code sessions:
 
-  [1] SESSION-A (...)  <-- current/open (open-file)
-  [2] SESSION-B (...)  <-- current/open (open-file)
-  [3] SESSION-C (...)
+  [1] Review authentication refactor  <-- recently active
+      ID: SESSION-A · 742 KB · 2026-08-09 14:32 · project: example-project
 
-Select one or more sessions [default: 1,2, current candidates]: 1-3
+  [2] Update deployment checks  <-- recently active
+      ID: SESSION-B · 1,208 KB · 2026-08-09 13:42 · project: example-project
+
+  [3] Untitled session
+      ID: SESSION-C · 32 KB · 2026-08-08 00:45 · project: example-project
+
+Select one or more sessions [default: 1,2, active candidates]: 1-3
 ```
 
 Each selected session can produce:
@@ -153,9 +159,16 @@ The project is currently developed and tested on macOS. Most compaction logic us
 
 On macOS, the strongest active-session detection optionally invokes the system `lsof` command.
 
-## Install from a release asset
+## Installation
 
-Download the checksummed standalone installer from the latest release:
+### Homebrew — recommended
+
+```zsh
+brew install haiggoh/tap/claude-code-session-bundle
+cc-transcript --version
+```
+
+### Standalone release installer
 
 ```zsh
 curl -fLO https://github.com/haiggoh/claude-code-session-bundle/releases/download/v0.5.0/claude-code-session-bundle-installer-v0.5.0.zsh
@@ -163,104 +176,9 @@ zsh -n claude-code-session-bundle-installer-v0.5.0.zsh
 zsh claude-code-session-bundle-installer-v0.5.0.zsh
 ```
 
-It verifies the release archive, installs source under `~/.local/share/claude-code-session-bundle/current`, and creates `~/.local/bin/cc-transcript`. Release assets also include a reproducible source archive and `SHA256SUMS`.
+The installer verifies the release archive, installs source under `~/.local/share/claude-code-session-bundle/current`, and creates `~/.local/bin/cc-transcript`. If `~/.local/bin` is not on `PATH`, it prints the line to add to `~/.zshrc`.
 
-## Installation
-
-Choose an installation layout based on whether you intend to use, maintain, or fork the project.
-
-### Standard user installation
-
-This keeps application source under `~/.local/share` and exposes a short command through `~/.local/bin`.
-
-```zsh
-mkdir -p "$HOME/.local/share" "$HOME/.local/bin"
-
-git clone \
-  https://github.com/haiggoh/claude-code-session-bundle.git \
-  "$HOME/.local/share/claude-code-session-bundle"
-
-chmod 755 \
-  "$HOME/.local/share/claude-code-session-bundle/compact_session_bundle.py"
-
-ln -s \
-  "$HOME/.local/share/claude-code-session-bundle/compact_session_bundle.py" \
-  "$HOME/.local/bin/cc-transcript"
-```
-
-If `~/.local/bin` is not already on `PATH`, add this to `~/.zshrc`:
-
-```zsh
-export PATH="$HOME/.local/bin:$PATH"
-```
-
-Reload the shell and verify:
-
-```zsh
-source "$HOME/.zshrc"
-cc-transcript --version
-```
-
-Update later with:
-
-```zsh
-git -C "$HOME/.local/share/claude-code-session-bundle" pull --ff-only
-```
-
-### Development or fork checkout
-
-If you want Claude Code to maintain the repository itself, a dedicated workspace such as `~/ClaudeWorkspace` is appropriate:
-
-```zsh
-mkdir -p "$HOME/ClaudeWorkspace" "$HOME/.local/bin"
-
-git clone \
-  https://github.com/haiggoh/claude-code-session-bundle.git \
-  "$HOME/ClaudeWorkspace/claude-code-session-bundle"
-
-chmod 755 \
-  "$HOME/ClaudeWorkspace/claude-code-session-bundle/compact_session_bundle.py"
-
-ln -s \
-  "$HOME/ClaudeWorkspace/claude-code-session-bundle/compact_session_bundle.py" \
-  "$HOME/.local/bin/cc-transcript"
-```
-
-This keeps the executable linked directly to the working tree. Changes made and tested in that checkout become the version invoked by `cc-transcript`.
-
-### Claude-local standalone copy
-
-If you prefer to keep Claude-related utilities under `~/.claude`:
-
-```zsh
-mkdir -p "$HOME/.claude/scripts"
-
-install -m 700 \
-  compact_session_bundle.py \
-  "$HOME/.claude/scripts/compact_session_bundle.py"
-```
-
-Add an alias to `~/.zshrc`:
-
-```zsh
-alias cc-transcript='python3 "$HOME/.claude/scripts/compact_session_bundle.py"'
-```
-
-Then reload:
-
-```zsh
-source "$HOME/.zshrc"
-```
-
-This layout creates a standalone copy. Updating the cloned repository will not automatically update the installed script.
-
-### Run without installation
-
-From a cloned repository:
-
-```zsh
-python3 compact_session_bundle.py
-```
+Release assets also include a reproducible source archive and `SHA256SUMS`.
 
 ## Interactive selection
 
@@ -368,7 +286,7 @@ cc-transcript --force
 
 `--force` bypasses the prefix safety rule. Use it only after independently confirming that the existing output may be replaced.
 
-The parser accepts `--overwrite` for compatibility, but in version 0.4.3 it does not authorize or alter replacement behavior. Use `--existing` or `--force` according to the intended operation.
+The parser accepts `--overwrite` for compatibility, but in version 0.5.0 it does not authorize or alter replacement behavior. Use `--existing` or `--force` according to the intended operation.
 
 ## Non-interactive usage
 
@@ -452,16 +370,16 @@ The interactive picker can mark more than one transcript.
 
 | Marker | Meaning |
 | --- | --- |
-| `current/open (open-file)` | File detected as open through macOS `lsof` |
-| `current/open (environment-id)` | Filename matched a Claude session environment value |
-| `likely current (likely-recent-activity)` | Recent, substantial transcript identified through metadata |
-| `likely current (likely-recent-size)` | Conservative metadata fallback |
+| `writing now` | Transcript file is open at the instant of detection |
+| `session ID match` | Filename matches an available Claude session environment value |
+| `recently active` | Substantial transcript modified within the recent-activity window |
+| `recent fallback` | Last-resort recency-and-size selection when stronger signals are absent |
 
-`open-file` is the strongest current-session signal.
+`writing now` is the strongest instantaneous signal, but idle Claude sessions may close their transcript between writes.
 
 An environment-ID match is useful but not conclusive. Some Claude Code harness variants expose an orchestration or task ID rather than the transcript's own ID, and matching is based on filename containment.
 
-Metadata-based labels are heuristics. They may:
+Recent-activity markers are heuristics. They may:
 
 - include a recently closed session;
 - miss a live transcript whose writes are buffered;
@@ -654,6 +572,38 @@ Yes. A verified extension can be amended into the complete bundle or exported as
 ### Why was replacement refused?
 
 The existing compact transcript was not identical, a verified prefix, or a narrowly recognized legacy representation of the selected source.
+
+## Alternative installation layouts
+
+<details>
+<summary>Development checkout, Claude-local copy, and direct execution</summary>
+
+### Development or fork checkout
+
+Use this when you want Claude Code or another development tool to maintain the repository itself:
+
+```zsh
+mkdir -p "$HOME/ClaudeWorkspace"
+git clone https://github.com/haiggoh/claude-code-session-bundle.git "$HOME/ClaudeWorkspace/claude-code-session-bundle"
+python3 "$HOME/ClaudeWorkspace/claude-code-session-bundle/compact_session_bundle.py"
+```
+
+### Claude-local standalone copy
+
+```zsh
+mkdir -p "$HOME/.claude/scripts"
+install -m 700 compact_session_bundle.py "$HOME/.claude/scripts/compact_session_bundle.py"
+```
+
+### Run directly from any clone
+
+```zsh
+python3 compact_session_bundle.py
+```
+
+These layouts are useful for development or custom setups. Homebrew or the standalone release installer is preferred for routine use.
+
+</details>
 
 ## Development and compatibility
 
