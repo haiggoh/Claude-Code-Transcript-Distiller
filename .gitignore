@@ -10,3 +10,13 @@ __pycache__/
 *.swp
 *.swo
 *~
+
+# Python test caches
+__pycache__/
+*.py[cod]
+
+# Local patch backups
+.backup-*/
+
+# Built release assets
+dist/

@@ -130,8 +130,9 @@ It does not replace Claude Code's internal context management, resume sessions, 
 - Optionally replaces embedded base64 images with length markers.
 - Generates rule-based semantic working context.
 - Supports interactive selection of one or several sessions.
+- Displays human-readable session labels while retaining the complete UUID.
 - Accepts comma-separated lists and human-friendly ranges.
-- Detects multiple open or likely active session transcripts on macOS.
+- Detects multiple writing, identity-matched, or recently active session transcripts on macOS.
 - Leaves identical bundles untouched.
 - Safely amends an older bundle when it is a verified prefix.
 - Can write appended records as a numbered continuation.
@@ -151,6 +152,18 @@ It does not replace Claude Code's internal context management, resume sessions, 
 The project is currently developed and tested on macOS. Most compaction logic uses portable Python standard-library APIs and may also work on Linux or Windows, but that has not yet been established through a published cross-platform test suite.
 
 On macOS, the strongest active-session detection optionally invokes the system `lsof` command.
+
+## Install from a release asset
+
+Download the checksummed standalone installer from the latest release:
+
+```zsh
+curl -fLO https://github.com/haiggoh/claude-code-session-bundle/releases/download/v0.5.0/claude-code-session-bundle-installer-v0.5.0.zsh
+zsh -n claude-code-session-bundle-installer-v0.5.0.zsh
+zsh claude-code-session-bundle-installer-v0.5.0.zsh
+```
+
+It verifies the release archive, installs source under `~/.local/share/claude-code-session-bundle/current`, and creates `~/.local/bin/cc-transcript`. Release assets also include a reproducible source archive and `SHA256SUMS`.
 
 ## Installation
 
@@ -279,6 +292,13 @@ After processing a batch, the tool:
 2. lists artifacts written;
 3. identifies sessions that were already current or skipped;
 4. asks whether to export more sessions.
+
+### Session labels
+
+Picker labels follow Claude Code's display precedence: the latest custom title, latest AI-generated title, latest summary, first meaningful non-meta user prompt, then a project fallback. Labels are read defensively from the internal JSONL format, redacted, normalized to one line, bounded in length, and cached for the current invocation. The complete session UUID remains visible beneath every title. Sessions without usable title or prompt text are shown as `Untitled session`.
+
+Activity markers state the observed signal: `writing now`, `session ID match`, `recently active`, or `recent fallback`. These signals are merged, so one transcript being open for writing does not hide other idle but recently active sessions.
+
 
 ## Existing bundles
 
@@ -649,7 +669,7 @@ Check the version:
 python3 compact_session_bundle.py --version
 ```
 
-The current release has been manually validated against synthetic and real Claude Code transcripts. An automated regression suite is not yet included in the repository.
+The current release includes a standard-library regression suite and has also been validated against real Claude Code transcripts.
 
 Useful regression cases include:
 

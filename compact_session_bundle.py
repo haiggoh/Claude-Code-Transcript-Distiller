@@ -8,7 +8,7 @@ Each selected raw session can produce four complementary artifacts:
   <session>.indexed_capsule.md  portable chronology-and-context hybrid
 
 Interactive runs support multiple sessions, list/range selection, repeated export
-batches, and markers for confirmed or likely active transcripts. Existing bundles
+batches, human-readable session titles, and activity markers. Existing bundles
 are compared before replacement: identical bundles are left untouched, verified
 extensions can be amended or written as numbered continuations, recognized legacy
 bundles can be migrated, and unexplained differences are refused unless --force is
@@ -39,7 +39,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
-VERSION = "0.4.3"
+VERSION = "0.5.0"
 CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
 DEFAULT_OUTPUT_DIR = Path.home() / ".claude" / "compacted-sessions"
 HOISTED_FIELDS = ["sessionId", "version", "gitBranch", "cwd", "entrypoint"]
@@ -54,6 +54,7 @@ NOISE_ATTACHMENT_TYPES = {"output_style", "task_reminder"}
 PREVIEW_CHARS = 220
 CAPSULE_EXCERPT = 700
 CAPSULE_LARGE_RECORD = 12_000
+SESSION_TITLE_CHARS = 100
 
 SECRET_PATTERNS = [
     (re.compile(r"(?i)(authorization\s*:\s*bearer\s+)[^\s,;]+"), r"\1[REDACTED]"),
@@ -129,6 +130,12 @@ class Row:
     tool_name: str = ""
     raw_text: str = ""
     command: str = ""
+
+
+@dataclass(frozen=True)
+class SessionLabel:
+    text: str
+    source: str
 
 
 def redact(text: str) -> str:
@@ -1068,11 +1075,11 @@ def current_hint(path: Path) -> bool:
 
 
 def detect_active_sessions(files: Sequence[Path]) -> dict[Path, str]:
-    """Find all currently open transcript files, with conservative fallbacks.
+    """Merge instantaneous, identity, and recent-activity session signals.
 
-    macOS lsof is authoritative enough to mark multiple open files. Environment
-    IDs supplement it. If neither yields anything, mark only metadata-based
-    candidates in the current project as likely rather than confirmed.
+    An open file descriptor is an instantaneous signal, not a complete inventory:
+    idle Claude Code sessions can close their transcript between writes. Recent
+    activity is therefore retained even when another transcript is open now.
     """
     resolved = {path.resolve(): path for path in files}
     active: dict[Path, str] = {}
@@ -1090,34 +1097,115 @@ def detect_active_sessions(files: Sequence[Path]) -> dict[Path, str]:
                         active[resolved[opened]] = "open-file"
         except (OSError, subprocess.SubprocessError):
             pass
+
     for path in files:
         if current_hint(path):
-            active[path] = "environment-id"
-    if active:
-        return active
+            active.setdefault(path, "environment-id")
 
     project_dir = find_current_project_dir()
-    if project_dir is None:
-        return active
-    direct = [path for path in files if path.parent.resolve() == project_dir.resolve()]
-    if not direct:
-        return active
+    direct = (
+        [path for path in files if path.parent.resolve() == project_dir.resolve()]
+        if project_dir is not None else []
+    )
     now = datetime.now().timestamp()
-    # Metadata cannot prove a live process, so mark all substantial transcripts
-    # touched in the last two hours as candidates. This permits several concurrent
-    # sessions while avoiding the common tiny /clear stub.
-    likely = [path for path in direct
-              if now - path.stat().st_mtime <= 2 * 60 * 60
-              and path.stat().st_size >= 64 * 1024]
-    for path in likely:
-        active[path] = "likely-recent-activity"
-    if not active:
+    recent = [
+        path for path in direct
+        if now - path.stat().st_mtime <= 2 * 60 * 60
+        and path.stat().st_size >= 64 * 1024
+    ]
+    for path in recent:
+        active.setdefault(path, "recent-activity")
+
+    if not active and direct:
         newest = max(path.stat().st_mtime for path in direct)
         cohort = [path for path in direct if newest - path.stat().st_mtime <= 45 * 60]
         if cohort:
             largest = max(cohort, key=lambda path: path.stat().st_size)
-            active[largest] = "likely-recent-size"
+            active[largest] = "recent-size-fallback"
     return active
+
+
+def _title_text(record: dict[str, Any], *keys: str) -> str:
+    for key in keys:
+        value = record.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    return ""
+
+
+def _record_matches_session(record: dict[str, Any], session_id: str) -> bool:
+    value = record.get("sessionId")
+    return value is None or value == session_id
+
+
+def _meaningful_prompt_text(text: str) -> str:
+    """Remove Claude Code command-envelope elements from a title fallback."""
+    cleaned = re.sub(
+        r"(?is)<command-(?:name|message|args)\b[^>]*>.*?</command-(?:name|message|args)>",
+        " ",
+        text,
+    )
+    cleaned = re.sub(
+        r"(?is)<command-(?:name|message|args)\b[^>]*/>",
+        " ",
+        cleaned,
+    )
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def resolve_session_label(path: Path, limit: int = SESSION_TITLE_CHARS) -> SessionLabel:
+    """Resolve a picker label using Claude Code's documented display precedence.
+
+    Transcript entries are an internal Claude Code format. Unknown and malformed
+    records are ignored, every metadata source is optional, and later title or
+    summary entries win. The source transcript is never modified.
+    """
+    custom_title = ""
+    ai_title = ""
+    summary = ""
+    first_prompt = ""
+    session_id = path.stem
+
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            for raw in handle:
+                try:
+                    record = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(record, dict) or not _record_matches_session(record, session_id):
+                    continue
+
+                kind = outer_type(record)
+                if kind == "custom-title":
+                    custom_title = _title_text(record, "customTitle", "custom_title") or custom_title
+                elif kind == "ai-title":
+                    ai_title = _title_text(record, "aiTitle", "ai_title") or ai_title
+                elif kind == "summary" or "summary" in record:
+                    summary = _title_text(record, "summary") or summary
+
+                if (
+                    not first_prompt
+                    and message_role(record) == "user"
+                    and not record.get("isMeta")
+                    and not result_blocks(record)
+                ):
+                    candidate = _meaningful_prompt_text(text_blocks(record))
+                    if candidate:
+                        first_prompt = candidate
+    except OSError:
+        pass
+
+    for source, value in (
+        ("custom title", custom_title),
+        ("AI title", ai_title),
+        ("summary", summary),
+        ("first prompt", first_prompt),
+    ):
+        if value.strip():
+            return SessionLabel(normalize(value, limit), source)
+
+    return SessionLabel("Untitled session", "fallback")
 
 
 def parse_selection(text: str, maximum: int) -> list[int]:
@@ -1155,6 +1243,7 @@ def picker() -> list[Path] | None:
         print(f"No session files found under {CLAUDE_PROJECTS_DIR}")
         return None
     active = detect_active_sessions(files)
+    title_cache: dict[Path, SessionLabel] = {}
     # Keep chronological ordering stable; markers can identify several sessions.
     shown_count = 5
     while True:
@@ -1166,16 +1255,26 @@ def picker() -> list[Path] | None:
             if method:
                 active_indices.append(index)
             stat = path.stat()
-            label = "current/open" if method in {"open-file", "environment-id"} else "likely current"
-            marker = f"  <-- {label} ({method})" if method else ""
-            print(f"  [{index}] {path.stem} ({stat.st_size/1024:,.0f} KB, "
-                  f"{datetime.fromtimestamp(stat.st_mtime):%Y-%m-%d %H:%M}, project: {path.parent.name}){marker}")
+            if path not in title_cache:
+                title_cache[path] = resolve_session_label(path)
+            session_label = title_cache[path]
+            activity_text = {
+                "open-file": "writing now",
+                "environment-id": "session ID match",
+                "recent-activity": "recently active",
+                "recent-size-fallback": "recent fallback",
+            }.get(method, method or "")
+            marker = f"  <-- {activity_text}" if activity_text else ""
+            print(f"  [{index}] {session_label.text}{marker}")
+            print(f"      ID: {path.stem} · {stat.st_size/1024:,.0f} KB · "
+                  f"{datetime.fromtimestamp(stat.st_mtime):%Y-%m-%d %H:%M} · project: {path.parent.name}")
+            print()
         if len(files) > shown_count:
             print(f"  [m] show {min(10, len(files)-shown_count)} more")
         print("  [q] quit")
         default_indices = active_indices or [1]
         default_text = ",".join(map(str, default_indices))
-        default_note = "current candidates" if active_indices else "most recent"
+        default_note = "active candidates" if active_indices else "most recent"
         choice = input(
             f"\nSelect one or more sessions [default: {default_text}, {default_note}]: "
         ).strip().lower()
