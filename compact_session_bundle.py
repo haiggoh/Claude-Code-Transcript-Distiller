@@ -1,29 +1,30 @@
 #!/usr/bin/env python3
 """Create portable, context-efficient bundles from Claude Code transcripts.
 
-Each selected raw session can produce four complementary artifacts:
-  <session>.compact.jsonl.txt   normalized, line-addressable evidence
-  <session>.compact_index.md    small navigation map for the compact JSONL
-  <session>.capsule.md          deterministic semantic working context
-  <session>.indexed_capsule.md  portable chronology-and-context hybrid
+Each selected session produces two canonical artifacts:
+  .compact.jsonl.txt   transformed, line-addressable format-3 evidence
+  .indexed_capsule.md  primary chronology-and-context handoff
 
-Interactive runs support multiple sessions, list/range selection, repeated export
-batches, human-readable session titles, and activity markers. Existing bundles
-are compared before replacement: identical bundles are left untouched, verified
-extensions can be amended or written as numbered continuations, recognized legacy
-bundles can be migrated, and unexplained differences are refused unless --force is
-explicitly supplied.
+Format 3 omits recognized base64 by default while preserving deterministic
+metadata, removes redundant title and last-prompt records, collapses unchanged
+mode announcements, references exact repeated large result payloads, and embeds
+sparse navigation in the compact header. Use --keep-base64 for exact binary text
+preservation and --omit-thinking for explicit thinking omission.
 
-Compaction removes designated structural noise, hoists only invariant repeated
-fields, strips usage accounting and thinking signatures, truncates image data only
-when requested, and deduplicates byte-identical tool-result payloads. This is
-semantic/structural compaction, not byte-for-byte losslessness. The compact JSONL
-remains the evidentiary source; capsules and indexes are navigation/working-context
-views. Outputs may still contain sensitive transcript content.
+Existing bundles are classified before replacement. Exact or safely projected
+format-2 bundles can migrate transactionally; retired index/capsule sidecars are
+removed only after the new pair verifies unless --keep-legacy-artifacts is used.
+Unexplained differences remain blocked unless --force is explicit.
+
+Compaction is semantic and structural, not byte-for-byte losslessness. Preserve
+the original Claude Code JSONL as authoritative raw evidence. Generated output
+may still contain sensitive transcript content and is not sanitized.
 """
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import copy
 import glob
 import hashlib
@@ -37,9 +38,11 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any, Callable, Iterable, Sequence
 
-VERSION = "0.5.0"
+VERSION = "0.6.0"
+BUNDLE_FORMAT = 3
+PAYLOAD_INTERN_THRESHOLD = 1_000
 CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
 DEFAULT_OUTPUT_DIR = Path.home() / ".claude" / "compacted-sessions"
 HOISTED_FIELDS = ["sessionId", "version", "gitBranch", "cwd", "entrypoint"]
@@ -283,42 +286,314 @@ def strip_usage_accounting(record: dict[str, Any]) -> None:
         message.pop("usage", None)
 
 
-def truncate_base64(record: dict[str, Any]) -> None:
-    def truncate(block: dict[str, Any]) -> None:
-        source = block.get("source")
-        if isinstance(source, dict) and isinstance(source.get("data"), str) and source["data"]:
-            source["data"] = f"<BASE64 TRUNCATED - {len(source['data'])} chars>"
-    for block in content_blocks(record):
-        if isinstance(block, dict) and block.get("type") == "image":
-            truncate(block)
-        elif isinstance(block, dict) and block.get("type") == "tool_result" and isinstance(block.get("content"), list):
-            for nested in block["content"]:
-                if isinstance(nested, dict) and nested.get("type") == "image":
-                    truncate(nested)
+def compact_session_title(
+    source_records: Sequence[tuple[int, dict[str, Any]]],
+) -> dict[str, str] | None:
+    """Resolve one final title using the established picker precedence."""
+    custom_title = ""
+    ai_title = ""
+    summary = ""
+    first_prompt = ""
+    for _, record in source_records:
+        kind = outer_type(record)
+        if kind == "custom-title":
+            custom_title = _title_text(record, "customTitle", "custom_title") or custom_title
+        elif kind == "ai-title":
+            ai_title = _title_text(record, "aiTitle", "ai_title") or ai_title
+        elif kind == "summary" or "summary" in record:
+            summary = _title_text(record, "summary") or summary
+        if (
+            not first_prompt
+            and message_role(record) == "user"
+            and not record.get("isMeta")
+            and not result_blocks(record)
+        ):
+            candidate = _meaningful_prompt_text(text_blocks(record))
+            if candidate:
+                first_prompt = candidate
+    for source, value in (
+        ("custom-title", custom_title),
+        ("ai-title", ai_title),
+        ("summary", summary),
+        ("first-prompt", first_prompt),
+    ):
+        if value.strip():
+            return {"value": normalize(value, SESSION_TITLE_CHARS), "source": source}
+    return None
+
+
+def state_stream_key(
+    record: dict[str, Any],
+) -> tuple[tuple[str, str], str] | None:
+    """Recognize only the empirically established state-record schemas."""
+    kind = record.get("type")
+    if kind == "mode":
+        expected = {"type", "sessionId", "mode"}
+        value = record.get("mode")
+    elif kind == "permission-mode":
+        expected = {"type", "sessionId", "permissionMode"}
+        value = record.get("permissionMode")
+    else:
+        return None
+    session_id = record.get("sessionId")
+    if set(record) != expected:
+        return None
+    if not isinstance(session_id, str) or not isinstance(value, str):
+        return None
+    return (kind, session_id), value
+
+
+def binary_descriptor(encoded: str, metadata: dict[str, Any]) -> dict[str, Any]:
+    compact_encoded = re.sub(r"\s+", "", encoded)
+    descriptor: dict[str, Any] = {
+        "encoding": "base64",
+        "encoded_chars": len(encoded),
+    }
+    try:
+        decoded = base64.b64decode(compact_encoded, validate=True)
+    except (binascii.Error, ValueError):
+        descriptor.update({
+            "sha256": hashlib.sha256(encoded.encode("utf-8")).hexdigest(),
+            "sha256_of": "encoded-text",
+            "decode_status": "invalid-base64",
+        })
+    else:
+        descriptor.update({
+            "decoded_bytes": len(decoded),
+            "sha256": hashlib.sha256(decoded).hexdigest(),
+            "sha256_of": "decoded-bytes",
+        })
+    for key in (
+        "media_type", "filename", "source_type", "dimensions",
+        "original_size", "file_type",
+    ):
+        value = metadata.get(key)
+        if value not in (None, "", {}, []):
+            descriptor[key] = copy.deepcopy(value)
+    return descriptor
+
+
+def binary_occurrences(
+    record: dict[str, Any],
+) -> list[tuple[dict[str, Any], str, str, dict[str, Any]]]:
+    found: list[tuple[dict[str, Any], str, str, dict[str, Any]]] = []
+
+    def walk(value: Any) -> None:
+        if isinstance(value, dict):
+            source = value.get("source")
+            if (
+                isinstance(source, dict)
+                and isinstance(source.get("data"), str)
+                and (value.get("type") == "image" or source.get("type") == "base64")
+            ):
+                found.append((source, "data", source["data"], {
+                    "media_type": source.get("media_type"),
+                    "source_type": value.get("type"),
+                }))
+            for child in value.values():
+                walk(child)
+        elif isinstance(value, list):
+            for child in value:
+                walk(child)
+
+    walk(record.get("message"))
     result = record.get("toolUseResult")
     file_info = result.get("file") if isinstance(result, dict) else None
-    if isinstance(file_info, dict) and isinstance(file_info.get("base64"), str) and file_info["base64"]:
-        file_info["base64"] = f"<BASE64 TRUNCATED - {len(file_info['base64'])} chars>"
+    if isinstance(file_info, dict) and isinstance(file_info.get("base64"), str):
+        found.append((file_info, "base64", file_info["base64"], {
+            "dimensions": file_info.get("dimensions"),
+            "original_size": file_info.get("originalSize"),
+            "file_type": file_info.get("type"),
+            "filename": file_info.get("filename") or file_info.get("name"),
+        }))
+    return found
 
 
-def dedupe_tool_result(record: dict[str, Any]) -> None:
+def omit_binary_payloads(
+    record: dict[str, Any],
+    audit: Audit,
+    seen: set[tuple[str, str]],
+) -> None:
+    grouped: dict[str, list[tuple[dict[str, Any], str, str, dict[str, Any]]]] = {}
+    for occurrence in binary_occurrences(record):
+        grouped.setdefault(occurrence[2], []).append(occurrence)
+    for encoded, group in grouped.items():
+        metadata: dict[str, Any] = {}
+        for _, _, _, candidate in group:
+            for key, value in candidate.items():
+                if value not in (None, "", {}, []):
+                    metadata.setdefault(key, value)
+        descriptor = binary_descriptor(encoded, metadata)
+        identity = (descriptor["sha256_of"], descriptor["sha256"])
+        new_identity = identity not in seen
+        if new_identity:
+            seen.add(identity)
+            audit.transformations["unique_binary_payloads_omitted"] += 1
+            audit.transformations["unique_decoded_binary_bytes_omitted"] += descriptor.get("decoded_bytes", 0)
+        for index, (container, key, payload, _) in enumerate(group):
+            audit.transformations["base64_occurrences_omitted"] += 1
+            audit.transformations["base64_chars_omitted"] += len(payload)
+            if new_identity and index == 0:
+                container[key] = {"__omitted_binary__": copy.deepcopy(descriptor)}
+            else:
+                container[key] = {"__omitted_binary_mirror__": {
+                    "sha256": descriptor["sha256"],
+                    "sha256_of": descriptor["sha256_of"],
+                }}
+                audit.transformations["mirrored_binary_occurrences_deduplicated"] += 1
+
+
+def omit_thinking_blocks(record: dict[str, Any], audit: Audit) -> None:
+    message = record.get("message")
+    if not isinstance(message, dict) or not isinstance(message.get("content"), list):
+        return
+    for index, block in enumerate(message["content"]):
+        if not isinstance(block, dict) or block.get("type") != "thinking":
+            continue
+        thinking = block.get("thinking")
+        if not isinstance(thinking, str):
+            thinking = block.get("text")
+        if not isinstance(thinking, str):
+            continue
+        message["content"][index] = {
+            "type": "thinking-omitted",
+            "characters": len(thinking),
+            "sha256": hashlib.sha256(thinking.encode("utf-8")).hexdigest(),
+        }
+        audit.transformations["thinking_blocks_omitted"] += 1
+        audit.transformations["thinking_characters_omitted"] += len(thinking)
+
+
+def payload_digest(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def protected_tool_input_payloads(record: dict[str, Any]) -> list[str]:
+    """Return large allowlisted tool-input strings without ever replacing them."""
+    found: list[str] = []
+    for block in call_blocks(record):
+        value = block.get("input")
+        if not isinstance(value, dict):
+            continue
+        for key in ("content", "text"):
+            candidate = value.get(key)
+            if isinstance(candidate, str) and len(candidate) >= PAYLOAD_INTERN_THRESHOLD:
+                found.append(candidate)
+    return found
+
+
+def result_payload_slots(record: dict[str, Any]) -> list[tuple[dict[str, Any], str]]:
+    """Return only explicitly recognized non-conversational result fields."""
+    slots: list[tuple[dict[str, Any], str]] = []
+    for block in result_blocks(record):
+        if isinstance(block.get("content"), str):
+            slots.append((block, "content"))
+    result = record.get("toolUseResult")
+    if isinstance(result, dict):
+        for key in ("content", "stdout", "stderr", "output", "result"):
+            if isinstance(result.get(key), str):
+                slots.append((result, key))
+        file_info = result.get("file")
+        if isinstance(file_info, dict) and isinstance(file_info.get("content"), str):
+            slots.append((file_info, "content"))
+    return slots
+
+
+def intern_exact_payloads(
+    record: dict[str, Any],
+    compact_line: int,
+    seen: dict[tuple[int, str], tuple[int, str]],
+    audit: Audit,
+) -> None:
+    """Replace later exact allowlisted result payloads with backward references."""
+    for value in protected_tool_input_payloads(record):
+        identity = (len(value), payload_digest(value))
+        seen.setdefault(identity, (compact_line, value))
+
+    for container, key in result_payload_slots(record):
+        value = container.get(key)
+        if not isinstance(value, str) or len(value) < PAYLOAD_INTERN_THRESHOLD:
+            continue
+        digest = payload_digest(value)
+        identity = (len(value), digest)
+        prior = seen.get(identity)
+        if prior is None:
+            seen[identity] = (compact_line, value)
+            continue
+        first_line, first_value = prior
+        if first_value != value or first_line >= compact_line:
+            # A line-only reference cannot identify an earlier occurrence within
+            # the same JSON record. Keep same-line duplicates intact.
+            continue
+        container[key] = {
+            "__duplicate_payload__": {
+                "first_compact_line": first_line,
+                "characters": len(value),
+                "sha256": digest,
+            }
+        }
+        audit.transformations["duplicate_payloads_referenced"] += 1
+        audit.transformations["duplicate_payload_characters_avoided"] += len(value)
+
+
+def make_navigation(rows: Sequence[Row]) -> dict[str, Any]:
+    """Build sparse preview-free line arrays for the compact header."""
+    users = [row.line for row in rows if row.kind in {"USER", "QUEUED-USER"}]
+    navigation: dict[str, Any] = {
+        "human_turns": users,
+        "state_changes": [row.line for row in rows if row.kind in {"MODE", "PERMISSION-MODE"}],
+        "tests": [row.line for row in rows if is_test_evidence(row)],
+        "errors": [row.line for row in rows if is_error_evidence(row)],
+        "corrections": [row.line for row in rows if row.kind in {"USER", "QUEUED-USER"} and CORRECTION_RE.search(row.raw_text)],
+        "answers": [row.line for row in rows if is_interactive_answer(row)],
+        "open_work": [row.line for row in rows if row.kind in {"USER", "QUEUED-USER", "ASSISTANT"} and OPEN_RE.search(row.raw_text)],
+    }
+    if users:
+        navigation["initial_user"] = users[0]
+        navigation["latest_user"] = users[-1]
+    return {key: value for key, value in navigation.items() if value not in ([], None)}
+
+
+def dedupe_tool_result(record: dict[str, Any], audit: Audit | None = None) -> None:
+    """Replace exact same-record result mirrors with typed metadata."""
     result = record.get("toolUseResult")
     if not isinstance(result, dict):
         return
+    candidates: list[tuple[dict[str, Any], str]] = []
+    for key in ("content", "stdout"):
+        if isinstance(result.get(key), str):
+            candidates.append((result, key))
+    file_info = result.get("file")
+    if isinstance(file_info, dict) and isinstance(file_info.get("content"), str):
+        candidates.append((file_info, "content"))
+
     for block in result_blocks(record):
         content = block.get("content")
-        block_text = content if isinstance(content, str) else None
+        block_text: str | None = content if isinstance(content, str) else None
         if isinstance(content, list):
-            texts = [x.get("text") for x in content if isinstance(x, dict) and x.get("type") == "text"]
+            texts = [
+                item.get("text") for item in content
+                if isinstance(item, dict)
+                and item.get("type") == "text"
+                and isinstance(item.get("text"), str)
+            ]
             if len(texts) == 1:
                 block_text = texts[0]
-        file_info = result.get("file")
-        candidate = file_info.get("content") if isinstance(file_info, dict) else result.get("stdout")
-        if block_text is not None and candidate == block_text:
-            if isinstance(file_info, dict):
-                file_info["content"] = "<DUPLICATE OF message.content - stripped by compact_session_bundle.py>"
-            elif "stdout" in result:
-                result["stdout"] = "<DUPLICATE OF message.content - stripped by compact_session_bundle.py>"
+        if block_text is None:
+            continue
+        for container, key in candidates:
+            if container.get(key) != block_text:
+                continue
+            container[key] = {
+                "__duplicate_payload_mirror__": {
+                    "characters": len(block_text),
+                    "sha256": payload_digest(block_text),
+                    "retained_in": "message.tool_result.content",
+                }
+            }
+            if audit is not None:
+                audit.transformations["same_record_payload_mirrors_referenced"] += 1
+                audit.transformations["same_record_payload_characters_avoided"] += len(block_text)
 
 
 def is_noise(record: dict[str, Any]) -> bool:
@@ -328,7 +603,12 @@ def is_noise(record: dict[str, Any]) -> bool:
     return record.get("type") == "attachment" and isinstance(attachment, dict) and attachment.get("type") in NOISE_ATTACHMENT_TYPES
 
 
-def compact_records(input_path: Path, permissive: bool, truncate_images: bool) -> tuple[list[dict[str, Any]], Audit]:
+def compact_records(
+    input_path: Path,
+    permissive: bool,
+    keep_base64: bool = False,
+    omit_thinking: bool = False,
+) -> tuple[list[dict[str, Any]], Audit]:
     audit = Audit()
     source_records: list[tuple[int, dict[str, Any]]] = []
     malformed_records: list[tuple[int, dict[str, Any]]] = []
@@ -363,6 +643,8 @@ def compact_records(input_path: Path, permissive: bool, truncate_images: bool) -
     except UnicodeDecodeError as error:
         raise ValueError(f"Input is not valid UTF-8 near byte {error.start}; use --permissive to preserve replacement text") from error
 
+    session_title = compact_session_title(source_records)
+
     # Hoist only fields whose values remain invariant throughout the transcript.
     occurrences: dict[str, list[tuple[int, Any]]] = defaultdict(list)
     for line_no, record in source_records:
@@ -383,6 +665,9 @@ def compact_records(input_path: Path, permissive: bool, truncate_images: bool) -
     records: list[dict[str, Any]] = []
     malformed_by_line = dict(malformed_records)
     source_by_line = dict(source_records)
+    state_values: dict[tuple[str, str], str] = {}
+    binary_seen: set[tuple[str, str]] = set()
+    payload_seen: dict[tuple[int, str], tuple[int, str]] = {}
     for line_no in range(1, audit.physical_lines + 1):
         if line_no in malformed_by_line:
             records.append(malformed_by_line[line_no])
@@ -390,6 +675,28 @@ def compact_records(input_path: Path, permissive: bool, truncate_images: bool) -
         source = source_by_line.get(line_no)
         if source is None:
             continue
+        source_kind = outer_type(source)
+        if source_kind == "ai-title":
+            audit.omitted_records += 1
+            audit.transformations["repeated_ai_titles_removed"] += 1
+            continue
+        if source_kind == "last-prompt":
+            audit.omitted_records += 1
+            audit.transformations["last_prompt_records_removed"] += 1
+            continue
+        state = state_stream_key(source)
+        if state is not None:
+            stream, value = state
+            if state_values.get(stream) == value:
+                audit.omitted_records += 1
+                counter = (
+                    "unchanged_mode_records_removed"
+                    if stream[0] == "mode"
+                    else "unchanged_permission_mode_records_removed"
+                )
+                audit.transformations[counter] += 1
+                continue
+            state_values[stream] = value
         record = copy.deepcopy(source)
         if is_noise(record):
             audit.omitted_records += 1
@@ -408,15 +715,18 @@ def compact_records(input_path: Path, permissive: bool, truncate_images: bool) -
         strip_usage_accounting(record)
         if had_usage:
             audit.transformations["usage_objects_removed"] += 1
-        before_dedupe = json.dumps(record, sort_keys=True, ensure_ascii=False)
-        dedupe_tool_result(record)
-        if json.dumps(record, sort_keys=True, ensure_ascii=False) != before_dedupe:
-            audit.transformations["tool_payloads_deduplicated"] += 1
-        if truncate_images:
-            before_images = json.dumps(record, sort_keys=True, ensure_ascii=False)
-            truncate_base64(record)
-            if json.dumps(record, sort_keys=True, ensure_ascii=False) != before_images:
-                audit.transformations["image_records_truncated"] += 1
+        if not keep_base64:
+            omit_binary_payloads(record, audit, binary_seen)
+        if omit_thinking:
+            omit_thinking_blocks(record, audit)
+        dedupe_tool_result(record, audit)
+        compact_line = len(records) + 2
+        intern_exact_payloads(record, compact_line, payload_seen, audit)
+        if outer_type(record) == "file-history-delta":
+            audit.transformations["file_history_delta_records_preserved"] += 1
+            audit.transformations["file_history_delta_bytes_preserved"] += len(
+                (json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
+            )
         after = json.dumps(record, sort_keys=True, ensure_ascii=False)
         audit.transformed_records += before != after
         records.append(record)
@@ -424,8 +734,17 @@ def compact_records(input_path: Path, permissive: bool, truncate_images: bool) -
     audit.retained_source_records = len(records)
     compact_header = {
         **header,
-        "__bundle_format__": 2,
+        "__bundle_format__": BUNDLE_FORMAT,
         "__generator__": f"compact_session_bundle.py {VERSION}",
+        "__session_title__": session_title,
+        "__omission_policy__": {
+            "text_turns_truncated": False,
+            "tool_inputs_truncated": False,
+            "unique_tool_results_truncated": False,
+            "base64_omitted": not keep_base64,
+            "thinking_omitted": omit_thinking,
+            "file_history_deltas_preserved": True,
+        },
         "__source_name__": input_path.name,
         "__source_sha256__": hashlib.sha256(input_path.read_bytes()).hexdigest(),
         "__source_physical_lines__": audit.physical_lines,
@@ -845,6 +1164,32 @@ def make_capsule(source_name: str, compact_name: str, checksum: str, rows: list[
     return "".join(out)
 
 
+def evidence_roles(row: Row) -> list[str]:
+    """Return deterministic semantic roles for one compact line."""
+    roles: list[str] = []
+    if is_interactive_answer(row):
+        roles.append("interactive_answer")
+    if row.kind in {"USER", "QUEUED-USER"} and CORRECTION_RE.search(row.raw_text):
+        roles.append("correction")
+    if is_error_evidence(row):
+        roles.append("error")
+    if is_test_evidence(row):
+        roles.append("test")
+    if row.kind in {"USER", "QUEUED-USER", "ASSISTANT"} and DECISION_RE.search(row.raw_text):
+        roles.append("decision")
+    if row.kind in {"USER", "QUEUED-USER", "ASSISTANT"} and OPEN_RE.search(row.raw_text):
+        roles.append("open_work")
+    if row.kind in {"MODE", "PERMISSION-MODE"} or (
+        row.kind == "ASSISTANT/TOOL-CALL" and is_mutating_call(row)
+    ):
+        roles.append("state_change")
+    if row.kind == "ASSISTANT/TOOL-CALL" and not is_mutating_call(row) and (
+        SIGNAL_RE.search(row.preview) or TEST_RE.search(row.command)
+    ):
+        roles.append("diagnostic")
+    return roles
+
+
 def make_indexed_capsule(
     source_name: str,
     compact_name: str,
@@ -853,42 +1198,100 @@ def make_indexed_capsule(
     audit: Audit,
     continuation: dict[str, Any] | None = None,
 ) -> str:
-    """Combine line-addressable structure with the capsule's semantic detail."""
-    capsule = make_capsule(source_name, compact_name, checksum, rows)
-    title, remainder = capsule.split("\n", 1)
-    chronology = [
-        row for row in rows
-        if row.kind in {"USER", "QUEUED-USER", "ASSISTANT", "ASSISTANT/TOOL-CALL", "TOOL/RESULT"}
-    ]
-    preface = [
-        title.replace("Session Capsule", "Indexed Session Capsule"), "\n",
-        "\n> Portable hybrid: a compact chronology plus semantic working context. ",
-        "The compact JSONL remains the exact evidentiary source.\n\n",
+    """Create the primary handoff with one detailed evidence object per line."""
+    chronology = [row for row in rows if row.kind in {
+        "USER", "QUEUED-USER", "ASSISTANT", "ASSISTANT/TOOL-CALL", "TOOL/RESULT",
+    }]
+    evidence_rows = [row for row in rows if (
+        row.kind in {"USER", "QUEUED-USER"}
+        or evidence_roles(row)
+    )]
+    evidence_rows = sorted({row.line: row for row in evidence_rows}.values(), key=lambda row: row.line)
+    evidence_ids = {row.line: f"E{index}" for index, row in enumerate(evidence_rows, 1)}
+    roles_by_line = {row.line: evidence_roles(row) for row in evidence_rows}
+
+    out = [
+        f"# Indexed Session Capsule: `{source_name}`\n\n",
+        "> Primary working context. The accompanying compact JSONL is archival/escalation evidence.\n\n",
+        "## Instructions for the receiving LLM\n\n",
+        "Treat this indexed capsule as the primary working context. Do not request or read the accompanying compact JSONL unless this file lacks enough detail to reconstruct a consequential event.\n\n",
+        "1. Read the indexed chronology to establish event order.\n",
+        "2. Reconstruct objectives, instructions, corrections, decisions, actions, tests, failures, and open work from the semantic sections.\n",
+        "3. Reconcile repeated references to one evidence ID instead of treating them as independent evidence.\n",
+        "4. Prefer direct tool-result evidence and later evidence-backed findings over earlier plans or claims.\n",
+        "5. Treat rule-detected roles as candidates rather than guarantees.\n",
+        "6. Do not infer completion merely because no error or open-work phrase was found.\n",
+        "7. Escalate to referenced compact JSONL lines only when this capsule is insufficient.\n",
+        "8. If compact evidence is unavailable, state the remaining uncertainty rather than inventing detail.\n\n",
+        "## Identity and provenance\n\n",
+        f"- Source session: `{source_name}`\n",
+        f"- Compact evidence: `{compact_name}`\n",
+        f"- Compact SHA-256: `{checksum}`\n",
+        f"- Compact lines: {len(rows)}\n",
+        f"- Generator: compact_session_bundle.py {VERSION}\n\n",
     ]
     if continuation:
-        preface.extend([
+        out.extend([
             "## Continuation identity\n\n",
             f"- Part: {continuation['part']}\n",
             f"- Prior compact lines: {continuation['prior_lines']}\n",
             f"- First new global compact line: {continuation['first_global_line']}\n",
             f"- Prior compact SHA-256: `{continuation['prior_sha256']}`\n\n",
         ])
-    preface.extend([
-        "## Indexed chronology\n\n",
-        "The table is deliberately denser than the standalone index: every conversational or tool event is retained, while payload detail is carried in the sections below.\n\n",
-        table(chronology),
+
+    out.extend(["## Indexed chronology\n\n", table(chronology), "\n"])
+    out.append("## Canonical human instructions\n\n")
+    human_refs = [evidence_ids[row.line] for row in evidence_rows if row.kind in {"USER", "QUEUED-USER"}]
+    out.extend(f"- {evidence_id}\n" for evidence_id in human_refs)
+    if not human_refs:
+        out.append("- No human instruction detected.\n")
+
+    out.append("\n## Unique evidence excerpts\n\n")
+    for row in evidence_rows:
+        evidence_id = evidence_ids[row.line]
+        roles = roles_by_line[row.line]
+        role_text = ", ".join(roles) if roles else "human_instruction"
+        out.append(f"### {evidence_id} — compact line {row.line} — {role_text}\n\n")
+        payload = row.raw_text or row.preview
+        out.append(fenced(bounded(payload, CAPSULE_LARGE_RECORD)) + "\n\n")
+
+    sections = [
+        ("Decisions and constraints", "decision"),
+        ("State-changing actions", "state_change"),
+        ("Tests and empirical results", "test"),
+        ("Errors and anomalies", "error"),
+        ("Open work", "open_work"),
+        ("Corrections and superseded claims", "correction"),
+        ("Interactive answers", "interactive_answer"),
+        ("Diagnostic landmarks", "diagnostic"),
+    ]
+    for heading, role in sections:
+        out.append(f"## {heading}\n\n")
+        references = [evidence_ids[line] for line in sorted(evidence_ids) if role in roles_by_line[line]]
+        if references:
+            out.extend(f"- See {evidence_id}.\n" for evidence_id in references)
+        else:
+            out.append("- No rule-based candidate detected; absence does not prove none exists.\n")
+        out.append("\n")
+
+    out.append("## Compact evidence map\n\n")
+    out.append("| Evidence | Compact line | Type | Roles |\n| :--- | ---: | :--- | :--- |\n")
+    for row in evidence_rows:
+        roles = ", ".join(roles_by_line[row.line]) or "human_instruction"
+        out.append(f"| {evidence_ids[row.line]} | {row.line} | {row.kind} | {roles} |\n")
+
+    out.extend([
         "\n## Compaction audit\n\n",
         f"- Raw physical lines: {audit.physical_lines}\n",
         f"- Retained source records: {audit.retained_source_records}\n",
-        f"- Omitted noise records: {audit.omitted_records}\n",
+        f"- Omitted records: {audit.omitted_records}\n",
         f"- Malformed lines: {audit.malformed_lines}\n",
         f"- Non-object JSON values: {audit.non_object_lines}\n",
         f"- Hoisted-field conflicts: {len(audit.hoisted_conflicts)}\n",
     ])
     for name, count in sorted(audit.transformations.items()):
-        preface.append(f"- Transformation `{name}`: {count}\n")
-    preface.append("\n## Semantic working context\n")
-    return "".join(preface) + remainder
+        out.append(f"- Transformation `{name}`: {count}\n")
+    return "".join(out)
 
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -958,8 +1361,123 @@ def legacy_project(record: dict[str, Any]) -> dict[str, Any]:
     return projected
 
 
+FORMAT2_DUPLICATE_PAYLOAD_MARKER = (
+    "<DUPLICATE OF message.content - stripped by compact_session_bundle.py>"
+)
+
+
+def restore_format2_tool_mirrors(record: dict[str, Any]) -> None:
+    """Restore only documented format-2 same-record mirror markers."""
+    result = record.get("toolUseResult")
+    if not isinstance(result, dict):
+        return
+    for block in result_blocks(record):
+        content = block.get("content")
+        block_text: str | None = content if isinstance(content, str) else None
+        if isinstance(content, list):
+            texts = [
+                item.get("text") for item in content
+                if isinstance(item, dict)
+                and item.get("type") == "text"
+                and isinstance(item.get("text"), str)
+            ]
+            if len(texts) == 1:
+                block_text = texts[0]
+        if block_text is None:
+            continue
+        file_info = result.get("file")
+        if (
+            isinstance(file_info, dict)
+            and file_info.get("content")
+            == FORMAT2_DUPLICATE_PAYLOAD_MARKER
+        ):
+            file_info["content"] = block_text
+        elif result.get("stdout") == FORMAT2_DUPLICATE_PAYLOAD_MARKER:
+            result["stdout"] = block_text
+
+
+def format2_state_stream_key(
+    record: dict[str, Any],
+    session_identity: str,
+) -> tuple[tuple[str, str], str] | None:
+    """Recognize raw or exactly hoisted format-2 state records."""
+    state = state_stream_key(record)
+    if state is not None:
+        return state
+
+    kind = record.get("type")
+    if kind == "mode":
+        expected = {"type", "mode"}
+        value = record.get("mode")
+    elif kind == "permission-mode":
+        expected = {"type", "permissionMode"}
+        value = record.get("permissionMode")
+    else:
+        return None
+
+    if set(record) != expected or not isinstance(value, str):
+        return None
+    return (kind, session_identity), value
+
+
+def project_format2_body(
+    existing: Sequence[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Apply only documented format-3 transformations to a format-2 body."""
+    projected: list[dict[str, Any]] = []
+    state_values: dict[tuple[str, str], str] = {}
+    binary_seen: set[tuple[str, str]] = set()
+    payload_seen: dict[tuple[int, str], tuple[int, str]] = {}
+    audit = Audit()
+    old_header = existing[0].get("__compact_session_header__", {})
+    session_identity = ""
+    if isinstance(old_header, dict):
+        session_identity = str(
+            old_header.get("sessionId")
+            or old_header.get("__source_name__")
+            or "format2-bundle"
+        )
+
+    for source in existing[1:]:
+        record = copy.deepcopy(source)
+        kind = outer_type(record)
+        if kind in {"ai-title", "last-prompt"}:
+            continue
+        state = format2_state_stream_key(record, session_identity)
+        if state is not None:
+            stream, value = state
+            if state_values.get(stream) == value:
+                continue
+            state_values[stream] = value
+        restore_format2_tool_mirrors(record)
+        omit_binary_payloads(record, audit, binary_seen)
+        dedupe_tool_result(record, audit)
+        compact_line = len(projected) + 2
+        intern_exact_payloads(record, compact_line, payload_seen, audit)
+        projected.append(record)
+    return projected
+
+
 def compare_existing(existing: Sequence[dict[str, Any]], new: Sequence[dict[str, Any]]) -> tuple[str, int]:
-    """Classify an existing compact transcript without weakening identity checks."""
+    """Classify existing evidence using literal or narrowly versioned checks."""
+    old_header = existing[0].get("__compact_session_header__", {}) if existing else {}
+    new_header = new[0].get("__compact_session_header__", {}) if new else {}
+    old_format = old_header.get("__bundle_format__") if isinstance(old_header, dict) else None
+
+    if old_format == 2 and identities_compatible(existing, new):
+        projected = project_format2_body(existing)
+        new_body = list(new[1:])
+        common = min(len(projected), len(new_body))
+        if all(record_bytes(projected[index]) == record_bytes(new_body[index]) for index in range(common)):
+            if len(new_body) > len(projected):
+                return "format2-extension", len(projected)
+            if len(new_body) == len(projected):
+                # Projected-body equivalence is required regardless of the
+                # source hash claimed by the older header.
+                return "format2-migration", len(projected)
+            return "legacy-truncation", len(projected)
+        return "different", len(projected)
+
     old_body = list(existing[1:])
     new_body = list(new[1:])
     common = min(len(old_body), len(new_body))
@@ -970,9 +1488,6 @@ def compare_existing(existing: Sequence[dict[str, Any]], new: Sequence[dict[str,
             return "identical", len(old_body)
         return "truncation", len(old_body)
 
-    # Backward compatibility is deliberately narrow: require a recognized
-    # pre-v0.4 bundle, matching session/source identity, and an exact prefix
-    # after applying only the documented old hoisted-field policy.
     if is_legacy_bundle(existing) and identities_compatible(existing, new):
         if len(new_body) < len(old_body):
             return "legacy-truncation", len(old_body)
@@ -980,6 +1495,68 @@ def compare_existing(existing: Sequence[dict[str, Any]], new: Sequence[dict[str,
                for i in range(len(old_body))):
             return "legacy-migration", len(old_body)
     return "different", len(old_body)
+
+
+def materialize_continuation_payloads(
+    full_records: Sequence[dict[str, Any]],
+    tail_records: Sequence[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    retained: dict[tuple[int, int, str], str] = {}
+    binary_descriptors: dict[tuple[str, str], dict[str, Any]] = {}
+    for record in full_records:
+        for kind, metadata in iter_binary_metadata(record):
+            if kind != "descriptor":
+                continue
+            identity = (metadata.get("sha256_of"), metadata.get("sha256"))
+            if all(isinstance(item, str) and item for item in identity):
+                binary_descriptors.setdefault(identity, copy.deepcopy(metadata))
+
+    for line_number, record in enumerate(full_records, 1):
+        values = list(protected_tool_input_payloads(record))
+        values.extend(
+            value for container, key in result_payload_slots(record)
+            if isinstance((value := container.get(key)), str)
+            and len(value) >= PAYLOAD_INTERN_THRESHOLD
+        )
+        for value in values:
+            retained.setdefault(
+                (line_number, len(value), payload_digest(value)), value
+            )
+
+    def resolve(value: Any) -> Any:
+        if isinstance(value, dict):
+            binary_mirror = value.get("__omitted_binary_mirror__")
+            if isinstance(binary_mirror, dict) and len(value) == 1:
+                identity = (
+                    binary_mirror.get("sha256_of"),
+                    binary_mirror.get("sha256"),
+                )
+                descriptor = binary_descriptors.get(identity)
+                if descriptor is None:
+                    raise RuntimeError(
+                        f"Cannot materialize continuation binary mirror: {identity!r}"
+                    )
+                return {"__omitted_binary__": copy.deepcopy(descriptor)}
+
+            marker = value.get("__duplicate_payload__")
+            if isinstance(marker, dict) and len(value) == 1:
+                identity = (
+                    marker.get("first_compact_line"),
+                    marker.get("characters"),
+                    marker.get("sha256"),
+                )
+                payload = retained.get(identity)
+                if payload is None:
+                    raise RuntimeError(
+                        f"Cannot materialize continuation payload reference: {identity!r}"
+                    )
+                return payload
+            return {key: resolve(child) for key, child in value.items()}
+        if isinstance(value, list):
+            return [resolve(child) for child in value]
+        return value
+
+    return [resolve(copy.deepcopy(record)) for record in tail_records]
 
 
 def next_part_number(output_dir: Path, stem: str) -> int:
@@ -1016,14 +1593,24 @@ def snapshot_input(source: Path, attempts: int = 3) -> tuple[Path, dict[str, Any
         raise
 
 
-def transactional_write(files: dict[Path, str], replace_allowed: set[Path]) -> None:
-    """Stage and verify bytes, then commit the output set with rollback backups."""
+def transactional_write(
+    files: dict[Path, str],
+    replace_allowed: set[Path],
+    retire_paths: set[Path] | None = None,
+    verifier: Callable[[dict[Path, Path]], None] | None = None,
+) -> None:
+    """Stage, verify, commit, verify again, and restore every prior artifact on failure."""
     if not files:
         return
+    retire_paths = retire_paths or set()
     for path in files:
         if path.exists() and path not in replace_allowed:
             raise FileExistsError(f"Refusing to replace unapproved output: {path}")
         path.parent.mkdir(parents=True, exist_ok=True)
+    for path in retire_paths:
+        if path in files:
+            raise ValueError(f"Cannot retire a current output: {path}")
+
     staged: dict[Path, Path] = {}
     backups: dict[Path, Path] = {}
     committed: list[Path] = []
@@ -1035,13 +1622,26 @@ def transactional_write(files: dict[Path, str], replace_allowed: set[Path]) -> N
                 handle.flush()
                 os.fsync(handle.fileno())
             staged[path] = Path(name)
+
+        if verifier is not None:
+            verifier(staged)
+
+        for path in list(files) + sorted(retire_paths):
+            if not path.exists():
+                continue
+            backup = path.with_name(f".{path.name}.rollback-{os.getpid()}")
+            if backup.exists():
+                raise FileExistsError(f"Rollback path already exists: {backup}")
+            path.replace(backup)
+            backups[path] = backup
+
         for path in files:
-            if path.exists():
-                backup = path.with_name(f".{path.name}.rollback-{os.getpid()}")
-                path.replace(backup)
-                backups[path] = backup
             staged[path].replace(path)
             committed.append(path)
+
+        if verifier is not None:
+            verifier({path: path for path in files})
+
         for backup in backups.values():
             backup.unlink(missing_ok=True)
     except Exception:
@@ -1052,8 +1652,8 @@ def transactional_write(files: dict[Path, str], replace_allowed: set[Path]) -> N
                 backup.replace(path)
         raise
     finally:
-        for temp in staged.values():
-            temp.unlink(missing_ok=True)
+        for temporary in staged.values():
+            temporary.unlink(missing_ok=True)
 
 
 def base_name(path: Path) -> str:
@@ -1297,8 +1897,8 @@ def prompt_existing_mode(relationship: str) -> str | None:
     if relationship == "extension":
         print("  [a] amend the complete bundle with the verified new tail (default)")
         print("  [c] write only the new tail as a numbered continuation")
-    elif relationship == "legacy-migration":
-        print("  [a] migrate and replace the verified legacy bundle (default)")
+    elif relationship in {"legacy-migration", "format2-migration", "format2-extension"}:
+        print("  [a] migrate and replace the verified older-format bundle (default)")
     print("  [r] refuse replacement and skip this session")
     print("  [q] stop the current export batch")
     while True:
@@ -1314,10 +1914,148 @@ def prompt_existing_mode(relationship: str) -> str | None:
         print("Not a valid choice, try again.")
 
 
+def iter_binary_metadata(value: Any) -> Iterable[tuple[str, dict[str, Any]]]:
+    if isinstance(value, dict):
+        descriptor = value.get("__omitted_binary__")
+        if isinstance(descriptor, dict):
+            yield "descriptor", descriptor
+        mirror = value.get("__omitted_binary_mirror__")
+        if isinstance(mirror, dict):
+            yield "mirror", mirror
+        for child in value.values():
+            yield from iter_binary_metadata(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from iter_binary_metadata(child)
+
+
+def verify_binary_policy(records: Sequence[dict[str, Any]]) -> None:
+    header = records[0].get("__compact_session_header__", {})
+    policy = header.get("__omission_policy__", {}) if isinstance(header, dict) else {}
+    if not policy.get("base64_omitted"):
+        return
+
+    for line_number, record in enumerate(records[1:], 2):
+        if binary_occurrences(record):
+            raise RuntimeError(
+                f"Recognized raw base64 remains at compact line {line_number}"
+            )
+
+    descriptors: set[tuple[str, str]] = set()
+    mirrors: list[tuple[int, tuple[str, str]]] = []
+    for line_number, record in enumerate(records[1:], 2):
+        for kind, metadata in iter_binary_metadata(record):
+            identity = (
+                metadata.get("sha256_of"),
+                metadata.get("sha256"),
+            )
+            if not all(isinstance(item, str) and item for item in identity):
+                raise RuntimeError(
+                    f"Invalid binary metadata at compact line {line_number}"
+                )
+            if kind == "descriptor":
+                descriptors.add(identity)
+            else:
+                mirrors.append((line_number, identity))
+
+    for line_number, identity in mirrors:
+        if identity not in descriptors:
+            raise RuntimeError(
+                f"Unresolved binary mirror at compact line {line_number}"
+            )
+
+
+def iter_same_record_mirror_markers(value: Any) -> Iterable[dict[str, Any]]:
+    if isinstance(value, dict):
+        marker = value.get("__duplicate_payload_mirror__")
+        if isinstance(marker, dict):
+            yield marker
+        for child in value.values():
+            yield from iter_same_record_mirror_markers(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from iter_same_record_mirror_markers(child)
+
+
+def strings_in(value: Any) -> Iterable[str]:
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        if "__duplicate_payload_mirror__" in value or "__duplicate_payload__" in value:
+            return
+        for child in value.values():
+            yield from strings_in(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from strings_in(child)
+
+
+def verify_same_record_mirrors(records: Sequence[dict[str, Any]]) -> None:
+    for line_number, record in enumerate(records, 1):
+        identities = {
+            (len(value), payload_digest(value)) for value in strings_in(record)
+        }
+        for marker in iter_same_record_mirror_markers(record):
+            characters = marker.get("characters")
+            digest = marker.get("sha256")
+            if (
+                not isinstance(characters, int)
+                or not isinstance(digest, str)
+                or (characters, digest) not in identities
+            ):
+                raise RuntimeError(
+                    f"Unresolved same-record payload mirror at compact line {line_number}"
+                )
+
+
+def iter_duplicate_payload_markers(value: Any) -> Iterable[dict[str, Any]]:
+    if isinstance(value, dict):
+        marker = value.get("__duplicate_payload__")
+        if isinstance(marker, dict):
+            yield marker
+        for child in value.values():
+            yield from iter_duplicate_payload_markers(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from iter_duplicate_payload_markers(child)
+
+
+def verify_duplicate_payload_references(records: Sequence[dict[str, Any]]) -> None:
+    """Require every typed payload reference to resolve to one earlier retained value."""
+    seen: dict[tuple[int, str], tuple[int, str]] = {}
+    for line_number, record in enumerate(records, 1):
+        for marker in iter_duplicate_payload_markers(record):
+            first_line = marker.get("first_compact_line")
+            characters = marker.get("characters")
+            digest = marker.get("sha256")
+            if (
+                not isinstance(first_line, int)
+                or not isinstance(characters, int)
+                or not isinstance(digest, str)
+                or first_line >= line_number
+            ):
+                raise RuntimeError(
+                    f"Invalid duplicate payload reference at compact line {line_number}"
+                )
+            resolved = seen.get((characters, digest))
+            if resolved is None or resolved[0] != first_line:
+                raise RuntimeError(
+                    f"Unresolved duplicate payload reference at compact line {line_number}"
+                )
+
+        retained: list[str] = protected_tool_input_payloads(record)
+        retained.extend(
+            value for container, key in result_payload_slots(record)
+            if isinstance((value := container.get(key)), str)
+            and len(value) >= PAYLOAD_INTERN_THRESHOLD
+        )
+        for value in retained:
+            identity = (len(value), payload_digest(value))
+            seen.setdefault(identity, (line_number, value))
+
+
 def verify(
     compact_path: Path,
-    index_path: Path,
-    capsule_path: Path,
     indexed_capsule_path: Path,
     expected_lines: int,
     expected_checksum: str,
@@ -1328,26 +2066,30 @@ def verify(
     written_checksum = hashlib.sha256(compact_path.read_bytes()).hexdigest()
     if written_checksum != expected_checksum:
         raise RuntimeError(f"Compact checksum mismatch: expected {expected_checksum}, found {written_checksum}")
-    for path in (index_path, capsule_path, indexed_capsule_path):
-        if not path.is_file() or path.stat().st_size == 0:
-            raise RuntimeError(f"Output verification failed: {path}")
-        text = path.read_text(encoding="utf-8")
-        if path != index_path and expected_checksum not in text:
-            raise RuntimeError(f"Expected compact checksum is absent from {path}")
-        patterns = (
-            [r"(?m)^\|\s*\d+\s*\|\s*(\d+)\s*\|"]
-            if path == index_path
-            else [
-                r"(?m)^### Line\s+(\d+)\b",
-                r"\[(?:[^\]]*;\s*)?line\s+(\d+)\]",
-                r"(?m)^\|\s*(\d+)\s*\|\s*[A-Z]",
-            ]
-        )
-        for pattern in patterns:
-            for match in re.finditer(pattern, text, re.IGNORECASE):
-                referenced = int(match.group(1))
-                if not 1 <= referenced <= expected_lines:
-                    raise RuntimeError(f"Out-of-range compact line reference in {path}: {referenced}")
+    verify_binary_policy(parsed)
+    verify_same_record_mirrors(parsed)
+    verify_duplicate_payload_references(parsed)
+    header = parsed[0]["__compact_session_header__"]
+    if header.get("__bundle_format__") != BUNDLE_FORMAT:
+        raise RuntimeError("Compact verification failed: wrong bundle format")
+    navigation = header.get("__navigation__", {})
+    for value in navigation.values():
+        references = value if isinstance(value, list) else [value]
+        for referenced in references:
+            if not isinstance(referenced, int) or not 1 <= referenced <= expected_lines:
+                raise RuntimeError(f"Invalid navigation reference: {referenced!r}")
+    if not indexed_capsule_path.is_file() or indexed_capsule_path.stat().st_size == 0:
+        raise RuntimeError(f"Output verification failed: {indexed_capsule_path}")
+    rendered = indexed_capsule_path.read_text(encoding="utf-8")
+    if expected_checksum not in rendered:
+        raise RuntimeError("Indexed capsule does not reference the compact checksum")
+    evidence_ids = re.findall(r"(?m)^### (E\d+) — compact line (\d+) —", rendered)
+    if len({item[0] for item in evidence_ids}) != len(evidence_ids):
+        raise RuntimeError("Duplicate evidence ID in indexed capsule")
+    for _, line_text in evidence_ids:
+        referenced = int(line_text)
+        if not 1 <= referenced <= expected_lines:
+            raise RuntimeError(f"Out-of-range evidence line: {referenced}")
 
 
 def find_current_project_dir() -> Path | None:
@@ -1415,7 +2157,14 @@ def parse_args() -> argparse.Namespace:
                         help="Existing-bundle behavior. In picker mode this is prompted interactively when omitted; otherwise defaults to amend")
     parser.add_argument("--no-snapshot", action="store_true", help="Read the source directly instead of taking a stable snapshot")
     parser.add_argument("--permissive", action="store_true", help="Preserve malformed input as marked records")
-    parser.add_argument("--truncate-base64", action="store_true", help="LOSSY: replace image base64 with length markers")
+    parser.add_argument("--keep-base64", action="store_true",
+                        help="Preserve recognized raw base64 instead of default omission metadata")
+    parser.add_argument("--truncate-base64", action="store_true",
+                        help="Deprecated compatibility flag; omission is already the default")
+    parser.add_argument("--omit-thinking", action="store_true",
+                        help="Replace thinking text with deterministic size/hash metadata")
+    parser.add_argument("--keep-legacy-artifacts", action="store_true",
+                        help="Retain verified retired .compact_index.md and .capsule.md files during migration")
     parser.add_argument("--preview-chars", type=int, default=PREVIEW_CHARS)
     parser.add_argument("--verify", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--version", action="version", version=VERSION)
@@ -1443,7 +2192,11 @@ def export_session(
         else:
             snapshot_path, snapshot_meta = snapshot_input(input_path)
             read_path = snapshot_path
-        records, audit = compact_records(read_path, args.permissive, args.truncate_base64)
+        records, audit = compact_records(
+            read_path, args.permissive,
+            keep_base64=args.keep_base64,
+            omit_thinking=args.omit_thinking,
+        )
         header = records[0]["__compact_session_header__"]
         header["__source_name__"] = input_path.name
         header["__snapshot_size__"] = snapshot_meta["size"]
@@ -1466,14 +2219,14 @@ def export_session(
             )
 
         existing_mode = args.existing or "amend"
-        if interactive and args.existing is None and relationship in {"extension", "legacy-migration"}:
+        if interactive and args.existing is None and relationship in {"extension", "legacy-migration", "format2-migration", "format2-extension"}:
             chosen = prompt_existing_mode(relationship)
             if chosen is None:
                 return "batch stopped before export", [], True
             existing_mode = chosen
-        if relationship in {"extension", "legacy-migration"} and existing_mode == "refuse":
+        if relationship in {"extension", "legacy-migration", "format2-migration", "format2-extension"} and existing_mode == "refuse":
             return "skipped by user; existing bundle unchanged", [], False
-        if relationship == "legacy-migration" and existing_mode == "continuation":
+        if relationship in {"legacy-migration", "format2-migration", "format2-extension"} and existing_mode == "continuation":
             raise FileExistsError("A legacy bundle must first be migrated in amend mode")
 
         continuation: dict[str, Any] | None = None
@@ -1483,7 +2236,10 @@ def export_session(
         if relationship == "extension" and existing_mode == "continuation":
             part = next_part_number(output_dir, stem)
             output_stem = f"{stem}.part{part}"
-            output_records = [copy.deepcopy(records[0])] + records[prior_count + 1:]
+            tail_records = materialize_continuation_payloads(
+                records, records[prior_count + 1:]
+            )
+            output_records = [copy.deepcopy(records[0])] + tail_records
             prior_sha = hashlib.sha256(canonical_compact.read_bytes()).hexdigest()
             continuation = {
                 "part": part,
@@ -1492,45 +2248,57 @@ def export_session(
                 "prior_sha256": prior_sha,
             }
             output_records[0]["__compact_session_header__"]["__continuation__"] = continuation
-        elif relationship in {"extension", "legacy-migration", "different", "truncation", "legacy-truncation"}:
+        elif relationship in {"extension", "legacy-migration", "format2-migration", "format2-extension", "different", "truncation", "legacy-truncation"}:
             replace_allowed = {
                 output_dir / f"{stem}.compact.jsonl.txt",
-                output_dir / f"{stem}.compact_index.md",
-                output_dir / f"{stem}.capsule.md",
                 output_dir / f"{stem}.indexed_capsule.md",
             }
 
         compact_path = output_dir / f"{output_stem}.compact.jsonl.txt"
-        index_path = output_dir / f"{output_stem}.compact_index.md"
-        capsule_path = output_dir / f"{output_stem}.capsule.md"
         indexed_capsule_path = output_dir / f"{output_stem}.indexed_capsule.md"
-        artifacts = [compact_path, index_path, capsule_path, indexed_capsule_path]
+        artifacts = [compact_path, indexed_capsule_path]
         if input_path.resolve() in {path.resolve() for path in artifacts}:
             raise ValueError("Input path collides with an output path")
 
+        rows = build_rows(output_records, args.preview_chars)
+        annotate_queues(rows)
+        output_records[0]["__compact_session_header__"]["__navigation__"] = make_navigation(rows)
         compact_text = serialize_jsonl(output_records)
         checksum = hashlib.sha256(compact_text.encode("utf-8")).hexdigest()
         rows = build_rows(output_records, args.preview_chars)
         annotate_queues(rows)
-        index_text = make_index(compact_path.name, rows, audit)
-        capsule_text = make_capsule(input_path.name, compact_path.name, checksum, rows)
         indexed_text = make_indexed_capsule(
             input_path.name, compact_path.name, checksum, rows, audit, continuation
         )
-        transactional_write({
-            compact_path: compact_text,
-            index_path: index_text,
-            capsule_path: capsule_text,
-            indexed_capsule_path: indexed_text,
-        }, replace_allowed)
-        if args.verify:
+        retire_paths: set[Path] = set()
+        if (
+            relationship in {"legacy-migration", "format2-migration", "format2-extension"}
+            and not getattr(args, "keep_legacy_artifacts", False)
+        ):
+            retire_paths = {
+                output_dir / f"{stem}.compact_index.md",
+                output_dir / f"{stem}.capsule.md",
+            }
+
+        def verify_pair(paths: dict[Path, Path]) -> None:
             verify(
-                compact_path, index_path, capsule_path, indexed_capsule_path,
+                paths[compact_path], paths[indexed_capsule_path],
                 len(output_records), checksum,
             )
+
+        must_verify = args.verify or bool(retire_paths)
+        transactional_write(
+            {
+                compact_path: compact_text,
+                indexed_capsule_path: indexed_text,
+            },
+            replace_allowed,
+            retire_paths,
+            verify_pair if must_verify else None,
+        )
         action = (
             "continuation created" if continuation
-            else "legacy bundle migrated" if relationship == "legacy-migration"
+            else "legacy bundle migrated" if relationship in {"legacy-migration", "format2-migration", "format2-extension"}
             else "bundle amended" if relationship == "extension"
             else "bundle created"
         )
@@ -1572,6 +2340,9 @@ def main() -> int:
         return 2
     if args.current and args.input is not None:
         print("Error: --current takes no input path.", file=sys.stderr)
+        return 2
+    if args.keep_base64 and args.truncate_base64:
+        print("Error: --keep-base64 conflicts with --truncate-base64.", file=sys.stderr)
         return 2
 
     interactive = not args.current and args.input is None

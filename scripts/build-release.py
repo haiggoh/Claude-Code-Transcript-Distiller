@@ -4,12 +4,15 @@ import gzip, hashlib, io, sys, tarfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-VERSION = sys.argv[1] if len(sys.argv) > 1 else "0.5.0"
+VERSION = sys.argv[1] if len(sys.argv) > 1 else "0.6.0"
 DIST = ROOT / "dist"
 PREFIX = f"claude-code-session-bundle-{VERSION}"
 FILES = [
-    "compact_session_bundle.py", "README.md", "LICENSE", "CHANGELOG.md",
-    "tests/test_session_titles.py",
+    "compact_session_bundle.py",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "docs/compact-format-3.md",
 ]
 DIST.mkdir(exist_ok=True)
 archive = DIST / f"{PREFIX}.tar.gz"

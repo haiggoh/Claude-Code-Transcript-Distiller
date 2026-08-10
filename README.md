@@ -8,7 +8,7 @@
 
 Claude Code Session Bundle is a Python CLI for exporting Claude Code session transcripts as smaller, portable, line-addressable artifacts. It is intended for carrying established context into ChatGPT, Gemini, another LLM, a code-review workflow, or an archival system without including as much repetitive metadata, usage accounting, duplicated tool output, and other structural noise.
 
-Unlike a plain generated summary, the bundle retains a compact transcript as its evidence layer and generates complementary navigation and semantic views.
+Unlike a plain generated summary, the bundle retains a compact transcript as its evidence layer and generates an indexed capsule as the primary standalone handoff.
 
 > [!IMPORTANT]
 > Compaction is semantic and structural, not byte-for-byte lossless. The original Claude Code JSONL remains the authoritative raw source and should be retained whenever exact provenance matters.
@@ -62,16 +62,14 @@ Recent Claude Code sessions:
 Select one or more sessions [default: 1,2, active candidates]: 1-3
 ```
 
-Each selected session can produce:
+Each selected session produces exactly:
 
 ```text
 SESSION.compact.jsonl.txt
-SESSION.compact_index.md
-SESSION.capsule.md
 SESSION.indexed_capsule.md
 ```
 
-Start with the indexed capsule when you want a small standalone handoff. Add the compact JSONL when the receiving model needs more complete, line-addressable evidence.
+Start with the indexed capsule as the normal handoff. Read or upload the compact JSONL only when consequential detail requires stronger line-addressable evidence.
 
 ## Use cases
 
@@ -88,27 +86,25 @@ Start with the indexed capsule when you want a small standalone handoff. Add the
 No specific token reduction is guaranteed. The amount saved depends on the source transcript, enabled options, and artifacts supplied to the receiving model.
 
 ## Output files
-
-For a source named `SESSION.jsonl`, the default output directory receives four complementary artifacts.
+For a source named `SESSION.jsonl`, the default output directory receives two artifacts.
 
 | Artifact | Purpose |
 | --- | --- |
-| `SESSION.compact.jsonl.txt` | Normalized, line-addressable compact evidence |
-| `SESSION.compact_index.md` | Small navigation map designed to accompany the compact JSONL |
-| `SESSION.capsule.md` | Rule-based semantic working context organized by instructions, decisions, actions, tests, errors, and open work |
-| `SESSION.indexed_capsule.md` | Portable hybrid combining a dense chronology with the capsule's semantic sections |
+| `SESSION.compact.jsonl.txt` | Format-3, line-addressable transformed evidence with sparse header navigation |
+| `SESSION.indexed_capsule.md` | Primary standalone chronology and semantic handoff with stable evidence IDs |
+
+The former `.compact_index.md` and `.capsule.md` sidecars are retired. During verified migration they are removed only after the new canonical pair passes committed verification; use `--keep-legacy-artifacts` to retain them.
 
 ### Which output should I use?
 
 | Goal | Recommended artifact |
 | --- | --- |
-| Small standalone context handoff | Indexed capsule |
-| Evidence-oriented LLM transfer | Compact JSONL + indexed capsule |
-| Fast navigation through compact evidence | Compact JSONL + compact index |
-| Human-readable semantic review | Capsule or indexed capsule |
+| Normal cross-LLM context handoff | Indexed capsule |
+| Consequential evidence lookup | Indexed capsule, then referenced compact JSONL lines |
+| Archival transformed evidence | Compact JSONL + indexed capsule |
 | Exact raw provenance | Original Claude Code JSONL |
 
-Within the generated bundle, the compact JSONL is the primary line-addressable evidence layer. It is still transformed and intentionally omits some raw data. The original Claude Code transcript remains the authoritative raw source.
+The compact JSONL remains transformed evidence. The original Claude Code transcript remains the authoritative raw source. See [`docs/compact-format-3.md`](docs/compact-format-3.md) for the durable format rules and migration invariants.
 
 ## How this differs from Claude Code `/compact`
 
@@ -126,27 +122,21 @@ This tool instead processes the session's on-disk JSONL transcript and creates p
 It does not replace Claude Code's internal context management, resume sessions, or inject generated bundles back into Claude Code automatically.
 
 ## Features
-
-- Produces four complementary artifacts from each selected session.
-- Removes designated structural noise and usage accounting.
-- Hoists repeated metadata only when it remains invariant.
-- Retains changing metadata values in their original records.
-- Removes thinking signatures while retaining transcript content.
-- Deduplicates byte-identical tool-result payloads.
-- Optionally replaces embedded base64 images with length markers.
-- Generates rule-based semantic working context.
-- Supports interactive selection of one or several sessions.
-- Displays human-readable session labels while retaining the complete UUID.
-- Accepts comma-separated lists and human-friendly ranges.
-- Detects multiple writing, identity-matched, or recently active session transcripts on macOS.
-- Leaves identical bundles untouched.
-- Safely amends an older bundle when it is a verified prefix.
-- Can write appended records as a numbered continuation.
-- Migrates narrowly recognized legacy bundles.
-- Refuses unexplained replacement unless `--force` is explicit.
-- Snapshots live transcripts before reading them.
-- Uses staged writes and commit-time rollback protection.
-- Performs checksum and compact-line-reference verification.
+- Produces exactly two canonical artifacts per session.
+- Uses compact bundle format 3 with sparse, preview-free header navigation.
+- Omits recognized base64 by default using deterministic binary metadata; `--keep-base64` preserves it exactly.
+- Resolves the final session title once and removes repeated `ai-title` and `last-prompt` metadata.
+- Preserves complete user text, visible assistant text, tool inputs, and unique textual tool results by default.
+- Replaces later exact allowlisted large result payloads with verified backward references.
+- Preserves thinking by default; `--omit-thinking` records deterministic size/hash metadata.
+- Preserves `file-history-delta` records unchanged and accounts for their records and bytes.
+- Collapses only unchanged recognized mode/permission repeats while preserving initial state and every transition.
+- Builds an indexed capsule with one detailed evidence object per compact line and deterministic multi-role evidence IDs.
+- Supports interactive multi-session selection and human-readable session labels.
+- Leaves identical current-format bundles untouched and blocks unexplained replacement unless `--force` is explicit.
+- Migrates verified format-2 bundles transactionally and can retain retired sidecars with `--keep-legacy-artifacts`.
+- Keeps canonical-relative continuation boundaries and the existing overlap warning.
+- Snapshots live transcripts, verifies staged and committed output, and restores prior artifacts on failure.
 - Uses only the Python standard library.
 
 ## Requirements and platform support
@@ -171,9 +161,9 @@ cc-transcript --version
 ### Standalone release installer
 
 ```zsh
-curl -fLO https://github.com/haiggoh/claude-code-session-bundle/releases/download/v0.5.0/claude-code-session-bundle-installer-v0.5.0.zsh
-zsh -n claude-code-session-bundle-installer-v0.5.0.zsh
-zsh claude-code-session-bundle-installer-v0.5.0.zsh
+curl -fLO https://github.com/haiggoh/claude-code-session-bundle/releases/download/v0.6.0/claude-code-session-bundle-installer-v0.6.0.zsh
+zsh -n claude-code-session-bundle-installer-v0.6.0.zsh
+zsh claude-code-session-bundle-installer-v0.6.0.zsh
 ```
 
 The installer verifies the release archive, installs source under `~/.local/share/claude-code-session-bundle/current`, and creates `~/.local/bin/cc-transcript`. If `~/.local/bin` is not on `PATH`, it prints the line to add to `~/.zshrc`.
@@ -249,12 +239,10 @@ Amendment regenerates the complete bundle from the current raw transcript. It is
 cc-transcript --existing continuation
 ```
 
-Continuation mode creates files such as:
+Continuation mode creates only:
 
 ```text
 SESSION.part2.compact.jsonl.txt
-SESSION.part2.compact_index.md
-SESSION.part2.capsule.md
 SESSION.part2.indexed_capsule.md
 ```
 
@@ -286,7 +274,7 @@ cc-transcript --force
 
 `--force` bypasses the prefix safety rule. Use it only after independently confirming that the existing output may be replaced.
 
-The parser accepts `--overwrite` for compatibility, but in version 0.5.0 it does not authorize or alter replacement behavior. Use `--existing` or `--force` according to the intended operation.
+The parser accepts `--overwrite` for compatibility, but it does not authorize or alter replacement behavior. Use `--existing` or `--force` according to the intended operation.
 
 ## Non-interactive usage
 
@@ -334,15 +322,23 @@ cc-transcript \
   --permissive
 ```
 
-### Truncate embedded image data
+### Base64 and thinking policy
+
+Recognized base64 is omitted by default and replaced with structured metadata containing available media details, encoded length, decoded length when valid, and a deterministic SHA-256. To preserve the exact encoded text deliberately:
 
 ```zsh
 cc-transcript \
   /path/to/session.jsonl \
-  --truncate-base64
+  --keep-base64
 ```
 
-This intentionally replaces image base64 with length markers and makes the output more lossy.
+The former `--truncate-base64` flag remains accepted as a deprecated compatibility no-op confirming the default omission policy. It conflicts with `--keep-base64`.
+
+Thinking remains preserved by default. Explicit omission is available with:
+
+```zsh
+cc-transcript /path/to/session.jsonl --omit-thinking
+```
 
 ### Disable the source snapshot
 
@@ -389,30 +385,23 @@ Recent-activity markers are heuristics. They may:
 A `/clear` operation can create a newer but tiny stub transcript. Fallback logic therefore considers recency and size instead of blindly selecting the newest file.
 
 ## What compaction changes
+The format-3 compact evidence file may:
 
-The compact evidence file may:
+- omit designated structural-noise records and usage accounting;
+- remove `userType` and thinking signatures;
+- preserve thinking text unless `--omit-thinking` is explicit;
+- hoist only invariant metadata and retain changing values chronologically;
+- omit recognized base64 by default using structured metadata;
+- preserve exact base64 with `--keep-base64`;
+- keep one resolved session title in the header while removing repeated `ai-title` and `last-prompt` records;
+- collapse unchanged recognized mode and permission announcements;
+- replace later byte-identical allowlisted result payloads of at least 1,000 characters with typed backward references;
+- preserve malformed input as marked records only in permissive mode;
+- preserve `file-history-delta` records unchanged.
 
-- omit designated noise records;
-- remove `userType`;
-- remove message usage accounting;
-- remove signatures from thinking blocks;
-- hoist invariant session fields into the compact header;
-- retain changing values in their original records;
-- replace duplicated tool-result payloads with explicit markers;
-- truncate embedded base64 only when requested;
-- preserve malformed lines as marked records only in permissive mode.
+It never semantically deduplicates text and does not truncate unique user, visible assistant, tool-input, or textual tool-result evidence by default.
 
-The compact header records:
-
-- source identity;
-- source checksum;
-- source physical line count;
-- generator and bundle format;
-- transformation counts;
-- hoisting conflicts;
-- snapshot metadata.
-
-The source JSONL is never intentionally written to. By default, the tool copies its visible bytes to a temporary snapshot and generates artifacts in a separate output directory.
+The compact header records source identity/checksum, format and generator, snapshot metadata, omission policy, transformation accounting, conflicts, and sparse navigation line numbers.
 
 ## Security and privacy
 
@@ -450,17 +439,9 @@ A live Claude Code process may still buffer records before writing them to disk.
 For a final archive, close Claude Code gracefully when practical before generating the bundle.
 
 ### Transactional writes
+Artifacts are staged before any existing generated output is moved. The staged pair is verified, prior artifacts are moved to rollback paths, the new pair is committed and verified again, and rollback copies are removed only after success. Any staging, commit, or committed-verification failure restores the complete prior generated state.
 
-Artifacts are staged before commit.
-
-During an approved replacement:
-
-1. existing outputs are moved to temporary rollback files;
-2. staged outputs are committed;
-3. rollback files are removed after the commit succeeds;
-4. previous outputs are restored if the commit operation itself fails.
-
-Post-write verification currently runs after commit. If verification fails, the command reports an error but does not automatically restore the previous bundle.
+During verified migration, only the same bundle's `.compact_index.md` and `.capsule.md` sidecars are eligible for retirement. Unrelated files are never deleted. Retirement always forces staged and committed verification even when `--no-verify` was requested.
 
 ### Verification
 
@@ -488,7 +469,6 @@ A legacy bundle is migrated only when:
 Unexplained differences remain blocked.
 
 ## Command reference
-
 ```text
 compact_session_bundle.py [INPUT]
 
@@ -498,38 +478,33 @@ compact_session_bundle.py [INPUT]
   --existing {amend,continuation,refuse}
   --force
   --permissive
-  --truncate-base64
+  --keep-base64
+  --truncate-base64        deprecated compatibility flag
+  --omit-thinking
+  --keep-legacy-artifacts
   --preview-chars NUMBER
   --no-snapshot
   --verify / --no-verify
   --version
 ```
 
-The parser also accepts the compatibility flag `--overwrite`, but version 0.4.3 does not use it to authorize replacement.
-
-Run the built-in help for the current parser options:
-
-```zsh
-cc-transcript --help
-```
+`--overwrite` remains accepted for compatibility but never bypasses identity checks. Use `--force` only for an independently verified unrelated replacement. Run `cc-transcript --help` for parser details.
 
 ## External-LLM workflow
-
-1. Generate the bundle.
-2. Inspect the indexed capsule for a compact overview and chronology.
-3. Attach the compact JSONL when the receiving model needs evidence beyond capsule excerpts.
-4. Tell the receiving model that compact JSONL line numbers identify the compact evidence records.
-5. Ask it to distinguish direct transcript evidence from rule-based capsule candidates.
-6. Return to the original raw transcript when omitted metadata or exact provenance is required.
+1. Generate the canonical pair.
+2. Use the indexed capsule as the primary working context.
+3. Establish chronology, then reconcile its objectives, instructions, corrections, decisions, actions, tests, failures, and open work.
+4. Follow stable evidence IDs instead of treating repeated references as separate evidence.
+5. Inspect only referenced compact JSONL lines when the capsule lacks consequential detail.
+6. Return to the original raw transcript when transformed evidence is insufficient.
 
 Example instruction:
 
 ```text
-Use the indexed capsule as working context and the compact JSONL as the primary
-compact evidence source. Cite compact JSONL line numbers for consequential claims.
-Treat detected decisions, open work, tests, and errors as rule-based candidates
-until the referenced evidence confirms them. The original raw JSONL remains the
-authoritative source if the compact artifacts are insufficient.
+Treat the indexed capsule as primary working context. Escalate to referenced
+compact JSONL lines only when needed for a consequential claim. Prefer direct
+tool evidence and later evidence-backed findings, and state uncertainty rather
+than inventing detail. The original raw JSONL remains authoritative.
 ```
 
 ## FAQ
@@ -658,7 +633,6 @@ Do not attach raw transcripts containing secrets, proprietary source code, custo
 - Best-effort redaction cannot guarantee removal of every secret.
 - Shell mutation detection cannot understand every possible command.
 - Later continuation parts may overlap earlier ones unless the canonical bundle is amended between exports.
-- Post-write verification failure does not currently trigger automatic rollback.
 - Cross-platform behavior has not yet been covered by a published automated test suite.
 - The tool does not upload, synchronize, or resume sessions automatically.
 
