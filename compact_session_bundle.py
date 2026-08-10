@@ -40,7 +40,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
-VERSION = "0.6.0"
+VERSION = "0.6.1"
 BUNDLE_FORMAT = 3
 PAYLOAD_INTERN_THRESHOLD = 1_000
 CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
@@ -139,6 +139,12 @@ class Row:
 class SessionLabel:
     text: str
     source: str
+
+
+@dataclass(frozen=True)
+class PickerMetadata:
+    label: SessionLabel
+    cwd: str = ""
 
 
 def redact(text: str) -> str:
@@ -1753,17 +1759,16 @@ def _meaningful_prompt_text(text: str) -> str:
     return re.sub(r"\s+", " ", cleaned).strip()
 
 
-def resolve_session_label(path: Path, limit: int = SESSION_TITLE_CHARS) -> SessionLabel:
-    """Resolve a picker label using Claude Code's documented display precedence.
-
-    Transcript entries are an internal Claude Code format. Unknown and malformed
-    records are ignored, every metadata source is optional, and later title or
-    summary entries win. The source transcript is never modified.
-    """
+def resolve_picker_metadata(
+    path: Path,
+    limit: int = SESSION_TITLE_CHARS,
+) -> PickerMetadata:
+    """Resolve picker title and latest valid CWD in one transcript scan."""
     custom_title = ""
     ai_title = ""
     summary = ""
     first_prompt = ""
+    latest_cwd = ""
     session_id = path.stem
 
     try:
@@ -1773,14 +1778,27 @@ def resolve_session_label(path: Path, limit: int = SESSION_TITLE_CHARS) -> Sessi
                     record = json.loads(raw)
                 except json.JSONDecodeError:
                     continue
-                if not isinstance(record, dict) or not _record_matches_session(record, session_id):
+                if (
+                    not isinstance(record, dict)
+                    or not _record_matches_session(record, session_id)
+                ):
                     continue
+
+                cwd = record.get("cwd")
+                if isinstance(cwd, str) and cwd.strip():
+                    latest_cwd = cwd.strip()
 
                 kind = outer_type(record)
                 if kind == "custom-title":
-                    custom_title = _title_text(record, "customTitle", "custom_title") or custom_title
+                    custom_title = (
+                        _title_text(record, "customTitle", "custom_title")
+                        or custom_title
+                    )
                 elif kind == "ai-title":
-                    ai_title = _title_text(record, "aiTitle", "ai_title") or ai_title
+                    ai_title = (
+                        _title_text(record, "aiTitle", "ai_title")
+                        or ai_title
+                    )
                 elif kind == "summary" or "summary" in record:
                     summary = _title_text(record, "summary") or summary
 
@@ -1796,6 +1814,7 @@ def resolve_session_label(path: Path, limit: int = SESSION_TITLE_CHARS) -> Sessi
     except OSError:
         pass
 
+    label = SessionLabel("Untitled session", "fallback")
     for source, value in (
         ("custom title", custom_title),
         ("AI title", ai_title),
@@ -1803,9 +1822,64 @@ def resolve_session_label(path: Path, limit: int = SESSION_TITLE_CHARS) -> Sessi
         ("first prompt", first_prompt),
     ):
         if value.strip():
-            return SessionLabel(normalize(value, limit), source)
+            label = SessionLabel(normalize(value, limit), source)
+            break
 
-    return SessionLabel("Untitled session", "fallback")
+    return PickerMetadata(label=label, cwd=latest_cwd)
+
+
+def resolve_session_label(
+    path: Path,
+    limit: int = SESSION_TITLE_CHARS,
+) -> SessionLabel:
+    """Resolve the human-readable label used by the interactive picker."""
+    return resolve_picker_metadata(path, limit).label
+
+
+def picker_project_name(cwd: str) -> str:
+    """Return a concise project name, omitting the user's home directory."""
+    if not cwd:
+        return ""
+    expanded = Path(cwd).expanduser()
+    if os.path.normpath(str(expanded)) == os.path.normpath(str(Path.home())):
+        return ""
+    return expanded.name
+
+
+def format_picker_size(size: int) -> str:
+    """Format picker sizes compactly without repeating per-value labels."""
+    if size >= 1024 * 1024:
+        return f"{size / (1024 * 1024):,.1f} MB"
+    if size >= 1024:
+        return f"{size / 1024:,.0f} KB"
+    return f"{size} B"
+
+
+def picker_size_summary(
+    transcript_path: Path,
+    output_dir: Path,
+) -> str:
+    """Show transcript size plus existing canonical artifact sizes."""
+    transcript_size = format_picker_size(transcript_path.stat().st_size)
+    stem = base_name(transcript_path)
+    output_dir = output_dir.expanduser().resolve()
+    compact_path = output_dir / f"{stem}.compact.jsonl.txt"
+    indexed_path = output_dir / f"{stem}.indexed_capsule.md"
+
+    if not compact_path.is_file() and not indexed_path.is_file():
+        return transcript_size
+
+    compact_size = (
+        format_picker_size(compact_path.stat().st_size)
+        if compact_path.is_file()
+        else "—"
+    )
+    indexed_size = (
+        format_picker_size(indexed_path.stat().st_size)
+        if indexed_path.is_file()
+        else "—"
+    )
+    return f"{transcript_size} [{compact_size} | {indexed_size}]"
 
 
 def parse_selection(text: str, maximum: int) -> list[int]:
@@ -1837,27 +1911,31 @@ def parse_selection(text: str, maximum: int) -> list[int]:
     return selected
 
 
-def picker() -> list[Path] | None:
+def picker(output_dir: Path = DEFAULT_OUTPUT_DIR) -> list[Path] | None:
     files = list_sessions()
     if not files:
         print(f"No session files found under {CLAUDE_PROJECTS_DIR}")
         return None
     active = detect_active_sessions(files)
-    title_cache: dict[Path, SessionLabel] = {}
+    metadata_cache: dict[Path, PickerMetadata] = {}
+    size_cache: dict[Path, str] = {}
     # Keep chronological ordering stable; markers can identify several sessions.
     shown_count = 5
     while True:
         shown = files[:shown_count]
         print("\nRecent Claude Code sessions:\n")
+        print("Sizes: transcript [compact JSONL | indexed capsule]\n")
         active_indices: list[int] = []
-        for index, path in enumerate(shown, 1):
-            method = active.get(path)
+        for index, session_path in enumerate(shown, 1):
+            method = active.get(session_path)
             if method:
                 active_indices.append(index)
-            stat = path.stat()
-            if path not in title_cache:
-                title_cache[path] = resolve_session_label(path)
-            session_label = title_cache[path]
+            stat_result = session_path.stat()
+            if session_path not in metadata_cache:
+                metadata_cache[session_path] = resolve_picker_metadata(
+                    session_path
+                )
+            metadata = metadata_cache[session_path]
             activity_text = {
                 "open-file": "writing now",
                 "environment-id": "session ID match",
@@ -1865,9 +1943,20 @@ def picker() -> list[Path] | None:
                 "recent-size-fallback": "recent fallback",
             }.get(method, method or "")
             marker = f"  <-- {activity_text}" if activity_text else ""
-            print(f"  [{index}] {session_label.text}{marker}")
-            print(f"      ID: {path.stem} · {stat.st_size/1024:,.0f} KB · "
-                  f"{datetime.fromtimestamp(stat.st_mtime):%Y-%m-%d %H:%M} · project: {path.parent.name}")
+            if session_path not in size_cache:
+                size_cache[session_path] = picker_size_summary(
+                    session_path,
+                    output_dir,
+                )
+            size_text = size_cache[session_path]
+            project = picker_project_name(metadata.cwd)
+            project_text = f" · project: {project}" if project else ""
+            print(f"  [{index}] {metadata.label.text}{marker}")
+            print(
+                f"      ID: {session_path.stem} · {size_text} · "
+                f"{datetime.fromtimestamp(stat_result.st_mtime):%Y-%m-%d %H:%M}"
+                f"{project_text}"
+            )
             print()
         if len(files) > shown_count:
             print(f"  [m] show {min(10, len(files)-shown_count)} more")
@@ -2360,7 +2449,7 @@ def main() -> int:
 
     while True:
         if interactive:
-            selected = picker()
+            selected = picker(args.output_dir)
             if selected is None:
                 if not batches:
                     print("Aborted, nothing written.")

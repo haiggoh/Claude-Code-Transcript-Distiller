@@ -109,5 +109,61 @@ class SessionTitleTests(unittest.TestCase):
         self.assertEqual(MODULE.resolve_session_label(one).text, MODULE.resolve_session_label(two).text)
         self.assertNotEqual(one.stem, two.stem)
 
+
+    def test_picker_metadata_uses_latest_cwd_without_changing_title(self):
+        path = self.make_session([
+            {"type": "user", "cwd": str(Path.home()),
+             "message": {"role": "user", "content": "Objective"}},
+            {"type": "assistant", "cwd": "/tmp/example-project",
+             "message": {"role": "assistant", "content": "Reply"}},
+        ])
+        metadata = MODULE.resolve_picker_metadata(path)
+        self.assertEqual(
+            metadata.label,
+            MODULE.SessionLabel("Objective", "first prompt"),
+        )
+        self.assertEqual(metadata.cwd, "/tmp/example-project")
+
+    def test_picker_project_omits_home_and_uses_cwd_basename(self):
+        self.assertEqual(MODULE.picker_project_name(str(Path.home())), "")
+        self.assertEqual(
+            MODULE.picker_project_name("/tmp/claude-code-session-bundle"),
+            "claude-code-session-bundle",
+        )
+        self.assertEqual(MODULE.picker_project_name(""), "")
+
+    def test_picker_size_summary_without_artifacts(self):
+        path = self.make_session([])
+        path.write_bytes(b"x" * (2 * 1024 * 1024 + 800 * 1024))
+        output = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(output))
+        self.assertEqual(
+            MODULE.picker_size_summary(path, output),
+            "2.8 MB",
+        )
+
+    def test_picker_size_summary_with_complete_and_partial_artifacts(self):
+        path = self.make_session([])
+        path.write_bytes(b"x" * (2 * 1024 * 1024 + 800 * 1024))
+        output = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(output))
+        compact = output / f"{path.stem}.compact.jsonl.txt"
+        indexed = output / f"{path.stem}.indexed_capsule.md"
+        compact.write_bytes(b"x" * (1024 * 1024 + 900 * 1024))
+        self.assertEqual(
+            MODULE.picker_size_summary(path, output),
+            "2.8 MB [1.9 MB | —]",
+        )
+        indexed.write_bytes(b"x" * (74 * 1024))
+        self.assertEqual(
+            MODULE.picker_size_summary(path, output),
+            "2.8 MB [1.9 MB | 74 KB]",
+        )
+        compact.unlink()
+        self.assertEqual(
+            MODULE.picker_size_summary(path, output),
+            "2.8 MB [— | 74 KB]",
+        )
+
 if __name__ == "__main__":
     unittest.main()

@@ -10,7 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 class ReleaseBuilderTests(unittest.TestCase):
-    def test_custom_archive_is_runtime_only_and_defaults_to_060(self):
+    def test_custom_archive_is_runtime_only_and_defaults_to_061(self):
         workspace = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, workspace)
         for name in ("compact_session_bundle.py", "README.md", "LICENSE", "CHANGELOG.md"):
@@ -26,16 +26,16 @@ class ReleaseBuilderTests(unittest.TestCase):
             workspace / "scripts/build-release.py",
         )
         subprocess.run([sys.executable, "scripts/build-release.py"], cwd=workspace, check=True, capture_output=True, text=True)
-        archive = workspace / "dist/claude-code-session-bundle-0.6.0.tar.gz"
+        archive = workspace / "dist/claude-code-session-bundle-0.6.1.tar.gz"
         self.assertTrue(archive.is_file())
         with tarfile.open(archive, "r:gz") as handle:
             names = set(handle.getnames())
         self.assertIn(
-            "claude-code-session-bundle-0.6.0/compact_session_bundle.py",
+            "claude-code-session-bundle-0.6.1/compact_session_bundle.py",
             names,
         )
         self.assertIn(
-            "claude-code-session-bundle-0.6.0/docs/compact-format-3.md",
+            "claude-code-session-bundle-0.6.1/docs/compact-format-3.md",
             names,
         )
         self.assertFalse(any("/tests/" in name for name in names))

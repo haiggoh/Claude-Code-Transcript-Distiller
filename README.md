@@ -50,14 +50,16 @@ Select one or more sessions using a number, list, or range:
 ```text
 Recent Claude Code sessions:
 
+Sizes: transcript [compact JSONL | indexed capsule]
+
   [1] Review authentication refactor  <-- recently active
-      ID: SESSION-A · 742 KB · 2026-08-09 14:32 · project: example-project
+      ID: SESSION-A · 742 KB [410 KB | 38 KB] · 2026-08-09 14:32
 
   [2] Update deployment checks  <-- recently active
-      ID: SESSION-B · 1,208 KB · 2026-08-09 13:42 · project: example-project
+      ID: SESSION-B · 1.2 MB [680 KB | 52 KB] · 2026-08-09 13:42 · project: example-project
 
   [3] Untitled session
-      ID: SESSION-C · 32 KB · 2026-08-08 00:45 · project: example-project
+      ID: SESSION-C · 32 KB · 2026-08-08 00:45
 
 Select one or more sessions [default: 1,2, active candidates]: 1-3
 ```
@@ -161,9 +163,9 @@ cc-transcript --version
 ### Standalone release installer
 
 ```zsh
-curl -fLO https://github.com/haiggoh/claude-code-session-bundle/releases/download/v0.6.0/claude-code-session-bundle-installer-v0.6.0.zsh
-zsh -n claude-code-session-bundle-installer-v0.6.0.zsh
-zsh claude-code-session-bundle-installer-v0.6.0.zsh
+curl -fLO https://github.com/haiggoh/claude-code-session-bundle/releases/download/v0.6.1/claude-code-session-bundle-installer-v0.6.1.zsh
+zsh -n claude-code-session-bundle-installer-v0.6.1.zsh
+zsh claude-code-session-bundle-installer-v0.6.1.zsh
 ```
 
 The installer verifies the release archive, installs source under `~/.local/share/claude-code-session-bundle/current`, and creates `~/.local/bin/cc-transcript`. If `~/.local/bin` is not on `PATH`, it prints the line to add to `~/.zshrc`.
@@ -204,6 +206,8 @@ After processing a batch, the tool:
 ### Session labels
 
 Picker labels follow Claude Code's display precedence: the latest custom title, latest AI-generated title, latest summary, first meaningful non-meta user prompt, then a project fallback. Labels are read defensively from the internal JSONL format, redacted, normalized to one line, bounded in length, and cached for the current invocation. The complete session UUID remains visible beneath every title. Sessions without usable title or prompt text are shown as `Untitled session`.
+
+The picker displays sizes as `transcript [compact JSONL | indexed capsule]`. Brackets appear only when at least one canonical artifact exists; `—` marks one missing artifact in a partial pair. Continuation files are not included. The project field is omitted for sessions whose latest valid CWD is the user's home directory; other sessions show only the CWD basename.
 
 Activity markers state the observed signal: `writing now`, `session ID match`, `recently active`, or `recent fallback`. These signals are merged, so one transcript being open for writing does not hide other idle but recently active sessions.
 

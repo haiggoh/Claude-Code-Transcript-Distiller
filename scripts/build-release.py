@@ -4,7 +4,7 @@ import gzip, hashlib, io, sys, tarfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-VERSION = sys.argv[1] if len(sys.argv) > 1 else "0.6.0"
+VERSION = sys.argv[1] if len(sys.argv) > 1 else "0.6.1"
 DIST = ROOT / "dist"
 PREFIX = f"claude-code-session-bundle-{VERSION}"
 FILES = [

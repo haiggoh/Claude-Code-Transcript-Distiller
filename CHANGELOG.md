@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.1
+
+- Show the original transcript size alongside existing canonical compact JSONL and indexed-capsule sizes in the interactive picker.
+- Keep generated artifact sizes visually grouped as `[compact JSONL | indexed capsule]`, including explicit partial-pair markers.
+- Omit the repetitive project field for home-directory sessions and show only the latest CWD basename for actual projects.
+- Resolve and cache picker title and CWD metadata in one transcript scan.
+
 ## 0.6.0
 
 - Make compact JSONL plus indexed capsule the exact canonical output pair; retire standalone index and capsule sidecars after verified migration.
