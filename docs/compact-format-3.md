@@ -77,12 +77,38 @@ The first compact JSONL line contains:
 {
   "__compact_session_header__": {
     "__bundle_format__": 3,
-    "__generator__": "compact_session_bundle.py 0.6.0"
+    "__generator__": "compact_session_bundle.py 0.6.2"
   }
 }
 ```
 
+The generator string carries the producing version, so it changes on every release. This does
+not affect existing-bundle classification: comparison operates on record bodies and never on
+the header line, so a bundle produced by an earlier 0.6.x still classifies as current.
+
 The full header also records available source and session identity, source filename and SHA-256, source physical-line count, stable-snapshot metadata, invariant hoisted fields, conflicts, resolved title, omission policy, transformation accounting, and sparse navigation.
+
+### Hoisted-field conflicts
+
+A field whose value is not invariant is not hoisted; its conflicting occurrences are recorded as
+**range-encoded spans**, since 0.6.2:
+
+```json
+{
+  "__hoisted_conflicts__": {
+    "cwd": [
+      { "from_line": 48, "to_line": 218, "occurrences": 121, "value": "/path/one" },
+      { "from_line": 219, "to_line": 604, "occurrences": 380, "value": "/path/two" }
+    ]
+  }
+}
+```
+
+Consecutive occurrences sharing a value collapse into one span; every value transition is
+preserved in order. `occurrences` states how many records inside the span carried the value, so a
+span never implies that every line within it carried the field. Before 0.6.2 this was one
+`[line, value]` pair per occurrence, which re-encoded the same value once per record and made the
+header dominate the artifact (95 KB of a 94 KB header line for 11 distinct values).
 
 Output is deterministic for identical source bytes, generator version, and options. The format excludes wall-clock generation time, temporary paths, and nondeterministic ordering.
 
@@ -254,6 +280,26 @@ diagnostic
 ```
 
 Semantic sections refer to the same evidence ID instead of repeating the full excerpt. Evidence IDs are navigation aids into compact evidence, not proof that heuristic classification is semantically correct.
+
+## Chronology and preview integrity
+
+The chronology table's line column is headed **`Compact Line`** and addresses the compact JSONL,
+never the original transcript. Until 0.6.2 it was headed `JSONL Line`, which invited a reader
+following the capsule's own escalation instruction to look up that number in the raw transcript and
+land on an unrelated record.
+
+A preview may combine the record's first line with the first line matching a signal pattern. Those
+two lines are frequently **not adjacent** in the source, so any skipped text is marked with `[…]`,
+and a surviving fragment that begins mid-sentence is prefixed with an ellipsis. Without those
+marks a preview can read as one continuous statement the source never contained — a fabrication
+rather than a truncation, which this format's purpose does not tolerate. A preview is always a
+lossy display artifact: the compact record remains the evidence.
+
+Chronology rows carrying no information at all are omitted — specifically plain assistant records
+whose only content block is a zero-length thinking block, which the source transcript emits and
+which accounted for 29% of the table on a real session. Rows retaining any evidence value are kept
+even when their preview is empty: a tool call or result still identifies its tool, and a queued
+user instruction is itself evidence.
 
 ## Existing bundles and migration
 

@@ -11,10 +11,6 @@ __pycache__/
 *.swo
 *~
 
-# Python test caches
-__pycache__/
-*.py[cod]
-
 # Local patch backups
 .backup-*/
 

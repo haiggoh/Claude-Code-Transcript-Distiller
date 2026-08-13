@@ -40,7 +40,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
-VERSION = "0.6.1"
+VERSION = "0.6.2"
 BUNDLE_FORMAT = 3
 PAYLOAD_INTERN_THRESHOLD = 1_000
 CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
@@ -55,6 +55,12 @@ NOISE_TYPE_SUBTYPE = {
 }
 NOISE_ATTACHMENT_TYPES = {"output_style", "task_reminder"}
 PREVIEW_CHARS = 220
+# Sentinel for a preview with nothing renderable. It is a display string, so any
+# truthiness test on a preview must compare against it explicitly (`if detail` was
+# always true, which is how "Tool: [empty]" reached the chronology).
+EMPTY_PREVIEW = "[empty]"
+# Marks text dropped between two non-adjacent preview lines.
+ELISION_MARK = "[…]"
 CAPSULE_EXCERPT = 700
 CAPSULE_LARGE_RECORD = 12_000
 SESSION_TITLE_CHARS = 100
@@ -112,7 +118,8 @@ class Audit:
     omitted_records: int = 0
     transformed_records: int = 0
     generated_records: int = 1
-    hoisted_conflicts: dict[str, list[tuple[int, Any]]] = field(default_factory=dict)
+    # Range-encoded spans (see collapse_conflict_runs), not one entry per occurrence.
+    hoisted_conflicts: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     transformations: Counter[str] = field(default_factory=Counter)
     malformed_details: list[tuple[int, str]] = field(default_factory=list)
 
@@ -184,7 +191,38 @@ def normalize(text: str, limit: int = PREVIEW_CHARS) -> str:
         raise ValueError("text limit must be at least 2")
     if len(text) > limit:
         text = text[:limit - 1].rstrip() + "…"
-    return text or "[empty]"
+    return text or EMPTY_PREVIEW
+
+
+def collapse_conflict_runs(
+    conflicts: Sequence[tuple[int, Any]],
+) -> list[dict[str, Any]]:
+    """Range-encode consecutive equal hoisted-field values instead of one entry per line.
+
+    A flat [line, value] pair per occurrence re-encodes the same value once per record,
+    which made the header dominate the whole artifact: 1,760 pairs covering 11 distinct
+    values serialized to 95 KB, i.e. >99% of a 94 KB header line, in the one record a
+    consumer reads first.
+
+    Consecutive occurrences sharing a value collapse into a single span. `occurrences` is
+    retained so the span stays honest: it says "these N records between from_line and
+    to_line carried this value", never "every line in the span carried the field". Order
+    and every value transition are preserved, which is the information this ledger exists
+    to convey.
+    """
+    runs: list[dict[str, Any]] = []
+    for line_no, value in conflicts:
+        if runs and runs[-1]["value"] == value and line_no >= runs[-1]["to_line"]:
+            runs[-1]["to_line"] = line_no
+            runs[-1]["occurrences"] += 1
+        else:
+            runs.append({
+                "from_line": line_no,
+                "to_line": line_no,
+                "occurrences": 1,
+                "value": value,
+            })
+    return runs
 
 
 def markdown_cell(text: str) -> str:
@@ -200,12 +238,32 @@ def fenced(text: str) -> str:
 
 
 def excerpt(text: str, limit: int = PREVIEW_CHARS) -> str:
+    """Preview the first line plus the first 'signal' line, marking any skipped text.
+
+    The signal line can sit anywhere later in the record, so joining it to the first line
+    with only a separator asserts adjacency that does not exist: dropped paragraphs
+    disappear silently and the surviving fragment can begin mid-sentence, so the preview
+    reads as one continuous statement the source never contained. For an evidence-handoff
+    artifact that is a fabrication, not merely a cosmetic issue — so a gap is always
+    marked with ELISION_MARK, and a fragment that clearly starts mid-sentence is prefixed
+    with an ellipsis.
+    """
     lines = [re.sub(r"\s+", " ", line).strip() for line in redact(text).splitlines()]
     lines = [line for line in lines if line]
     if not lines:
-        return "[empty]"
-    signal = next((line for line in lines if SIGNAL_RE.search(line)), "")
-    return normalize(f"{lines[0]} ⏐ {signal}" if signal and signal != lines[0] else lines[0], limit)
+        return EMPTY_PREVIEW
+    head = lines[0]
+    signal_index = next(
+        (index for index, line in enumerate(lines) if SIGNAL_RE.search(line)), None
+    )
+    if signal_index is None or signal_index == 0:
+        return normalize(head, limit)
+    signal = lines[signal_index]
+    # Adjacent lines are contiguous in the source; anything further skipped content.
+    joiner = " ⏐ " if signal_index == 1 else f" ⏐ {ELISION_MARK} "
+    if signal[:1].islower() or signal[:1] in ",;:)":
+        signal = f"…{signal}"
+    return normalize(f"{head}{joiner}{signal}", limit)
 
 
 def message_role(data: dict[str, Any]) -> str:
@@ -663,7 +721,7 @@ def compact_records(
         first = values[0][1]
         conflicts = [(line_no, value) for line_no, value in values[1:] if value != first]
         if conflicts:
-            audit.hoisted_conflicts[name] = conflicts
+            audit.hoisted_conflicts[name] = collapse_conflict_runs(conflicts)
         else:
             header[name] = first
             invariant_fields.add(name)
@@ -825,7 +883,10 @@ def describe_call(block: dict[str, Any]) -> tuple[str, str, str]:
                     break
     else:
         detail = flatten(value)
-    return name, normalize(detail, 150), tool_id
+    # Return "" rather than the EMPTY_PREVIEW sentinel for a no-argument call: callers
+    # test `if detail`, and a truthy "[empty]" rendered rows reading "TaskList: [empty]".
+    rendered = normalize(detail, 150)
+    return name, "" if rendered == EMPTY_PREVIEW else rendered, tool_id
 
 
 def build_rows(records: list[dict[str, Any]], preview_chars: int) -> list[Row]:
@@ -965,15 +1026,40 @@ def annotate_queues(rows: list[Row]) -> None:
 
 # Stage B: intentionally compact V4-style index
 
+def is_contentless_row(row: Row) -> bool:
+    """True when a chronology row would carry no information at all.
+
+    Plain assistant records whose only block is a zero-length thinking block (the source
+    transcript emits these) preview as the empty sentinel and have no text, tool name, or
+    result to contribute. They accounted for 409 of 1,399 chronology rows — 29% of the
+    table — on a real session. Only the plain ASSISTANT kind qualifies: a tool call or a
+    result still carries its tool identity even with an empty preview, and an empty USER
+    record is itself evidence.
+    """
+    return (
+        row.kind == "ASSISTANT"
+        and row.preview == EMPTY_PREVIEW
+        and not row.raw_text.strip()
+        and not row.tool_name
+    )
+
+
 def is_landmark(row: Row) -> bool:
     return (row.kind in {"USER", "QUEUED-USER", "ASSISTANT/TOOL-CALL"}
-            or (row.kind == "ASSISTANT" and row.preview != "[empty]")
+            or (row.kind == "ASSISTANT" and row.preview != EMPTY_PREVIEW)
             or (row.kind == "TOOL/RESULT" and bool(SIGNAL_RE.search(row.preview)))
             or row.kind in {"MODE", "PERMISSION-MODE", "MALFORMED-SOURCE"})
 
 
 def table(rows: Iterable[Row]) -> str:
-    out = ["| Record | JSONL Line | Time | Actor / Type | Semantic Preview |",
+    # "JSONL Line" claimed to address the raw transcript but carried the COMPACT line
+    # number (a result at source line 48 rendered as 34), while the capsule instructs the
+    # receiving model to escalate to referenced lines — so it sent readers to the wrong
+    # record in the original file. Both columns are compact-relative in the current
+    # pipeline; they are labelled separately rather than merged because Row.record counts
+    # emitted rows and Row.line is the compact line, and nothing guarantees they cannot
+    # diverge for some input shape.
+    out = ["| Record | Compact Line | Time | Actor / Type | Semantic Preview |",
            "| ---: | ---: | :---: | :--- | :--- |"]
     out.extend(f"| {r.record} | {r.line} | {r.time} | {r.kind} | {markdown_cell(r.preview)} |" for r in rows)
     return "\n".join(out) + "\n"
@@ -984,7 +1070,7 @@ def make_index(compact_name: str, rows: list[Row], audit: Audit) -> str:
     landmarks = [row for row in rows if is_landmark(row)]
     parts = [
         f"# Transcript Navigation Index: `{compact_name}`\n\n",
-        "`JSONL Line` addresses the physical line in the compact transcript. This small index is a navigation map, not a replacement for exact evidence or the semantic capsule.\n\n",
+        "`Compact Line` addresses the physical line in the compact transcript, not in the original Claude Code JSONL. This small index is a navigation map, not a replacement for exact evidence or the semantic capsule.\n\n",
         "## Semantic Landmarks\n\n", table(landmarks),
         "\n## Full Structural Map\n\n", table(rows),
         "\n## Parse Audit\n\n",
@@ -1207,7 +1293,7 @@ def make_indexed_capsule(
     """Create the primary handoff with one detailed evidence object per line."""
     chronology = [row for row in rows if row.kind in {
         "USER", "QUEUED-USER", "ASSISTANT", "ASSISTANT/TOOL-CALL", "TOOL/RESULT",
-    }]
+    } and not is_contentless_row(row)]
     evidence_rows = [row for row in rows if (
         row.kind in {"USER", "QUEUED-USER"}
         or evidence_roles(row)

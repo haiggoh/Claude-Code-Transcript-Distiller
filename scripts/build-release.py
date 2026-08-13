@@ -1,10 +1,27 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import gzip, hashlib, io, sys, tarfile
+import gzip, hashlib, io, re, sys, tarfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-VERSION = sys.argv[1] if len(sys.argv) > 1 else "0.6.1"
+
+
+def source_version() -> str:
+    """Read VERSION from the script being packaged.
+
+    A hardcoded default here silently produced a 0.6.1-named archive from a 0.6.2 source:
+    a version literal kept apart from its source of truth goes stale the moment the source
+    moves, and the artifact name is not something a release check tends to re-read. The
+    same failure shipped a Homebrew formula pinned to a superseded release.
+    """
+    text = (ROOT / "compact_session_bundle.py").read_text(encoding="utf-8")
+    match = re.search(r'^VERSION\s*=\s*"([^"]+)"', text, re.MULTILINE)
+    if not match:
+        raise SystemExit("FAIL: could not read VERSION from compact_session_bundle.py")
+    return match.group(1)
+
+
+VERSION = sys.argv[1] if len(sys.argv) > 1 else source_version()
 DIST = ROOT / "dist"
 PREFIX = f"claude-code-session-bundle-{VERSION}"
 FILES = [
