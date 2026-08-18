@@ -34,13 +34,14 @@ import re
 import sys
 import tempfile
 import subprocess
+import time
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
-VERSION = "0.6.2"
+VERSION = "0.6.3"
 BUNDLE_FORMAT = 3
 PAYLOAD_INTERN_THRESHOLD = 1_000
 CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
@@ -819,6 +820,48 @@ def compact_records(
 
 def serialize_jsonl(records: list[dict[str, Any]]) -> str:
     return "".join(json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n" for record in records)
+
+
+def source_chronology_key(path: Path) -> float:
+    """Sort key putting the OLDEST source transcript first.
+
+    Uses the source's mtime, the same signal list_sessions() orders the picker by, so "oldest
+    first" here means the same thing the user saw when choosing. A source that cannot be stat'ed
+    sorts last rather than aborting the batch — an unreadable mtime is not a reason to refuse to
+    export.
+    """
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return float("inf")
+
+
+def stagger_artifact_times(artifacts: list[Path]) -> int:
+    """Give each artifact its own mtime, one second apart, in the order written.
+
+    Artifacts written in one run land in the same second, and a filesystem timestamp has no
+    sub-second component that Finder sorts on — so a whole batch shares one modification time and
+    "sort by date" produces an arbitrary order that no longer matches the sessions' chronology.
+    Since the batch is processed oldest-source-first, stamping successive artifacts one second
+    apart makes date order equal transcript order.
+
+    Times run BACKWARD from now (last artifact ~now, earlier ones progressively older) so nothing
+    is stamped in the future, which would confuse Finder, backup tools, and make-style staleness
+    checks. A file that vanished or is not writable is skipped: cosmetic ordering must never fail
+    an export whose real output already succeeded. Returns the number of files stamped.
+    """
+    if len(artifacts) < 2:
+        return 0
+    base = time.time() - (len(artifacts) - 1)
+    stamped = 0
+    for offset, artifact in enumerate(artifacts):
+        when = base + offset
+        try:
+            os.utime(artifact, (when, when))
+            stamped += 1
+        except OSError:
+            continue
+    return stamped
 
 
 def atomic_write(path: Path, content: str, overwrite: bool) -> None:
@@ -2549,6 +2592,11 @@ def main() -> int:
                 return 0
             selected_batch = batches.pop(0)
 
+        # Oldest source first: artifacts are then WRITTEN in transcript chronology, which is what
+        # stagger_artifact_times() below turns into a matching date order on disk. The picker
+        # deliberately lists newest-first (most recent session at the top, where you want it), so
+        # without this the batch would be exported in reverse-chronological order.
+        selected_batch = sorted(selected_batch, key=source_chronology_key)
         results: list[tuple[Path, str, list[Path]]] = []
         failures = 0
         stop_batch = False
@@ -2563,6 +2611,9 @@ def main() -> int:
             if stop_batch:
                 break
         if results:
+            # Stamp across the WHOLE batch, not per session: two sessions exported in the same
+            # second would otherwise each be internally ordered yet tie with each other.
+            stagger_artifact_times([artifact for _, _, produced in results for artifact in produced])
             print_batch_summary(results)
         if stop_batch:
             return 1 if failures else 0

@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.6.3
+
+Artifact ordering on disk. A run's artifacts all landed inside the same second, and a filesystem
+timestamp has no sub-second component that Finder sorts on — so a batch shared one modification
+time and "sort by date" produced an arbitrary order that no longer matched the sessions'
+chronology. Measured on a real export: the two artifacts of a single session were written 0.4 ms
+apart, i.e. indistinguishable to any date sort.
+
+- Process a batch **oldest source first**. The picker deliberately lists newest-first (the most
+  recent session at the top, where you want it), so the batch was previously exported in
+  reverse-chronological order. `source_chronology_key` sorts by source mtime — the same signal the
+  picker orders by, so "oldest first" means the same thing the user saw when choosing — and a
+  source whose mtime cannot be read sorts last instead of aborting the batch.
+- Stamp each artifact one second apart in write order (`stagger_artifact_times`), across the whole
+  batch rather than per session — two sessions exported in the same second would otherwise each be
+  internally ordered yet tie with each other. Times run backward from now, so the last artifact is
+  ~now and earlier ones are progressively older: nothing is stamped in the future, which would
+  confuse Finder, backup tools and staleness checks. A missing or unwritable file is skipped, since
+  cosmetic ordering must never fail an export whose real output already succeeded.
+- Add 7 regression tests (71 total), each mutation-tested: neutering the stagger fails two, and
+  removing main's ordering call fails the wiring check. The wiring check inspects the parsed AST
+  rather than the source text, because both fixes live in main()'s batch loop, which needs the
+  interactive picker to reach and so cannot be exercised directly by a unit test.
+
 ## 0.6.2
 
 Defect fixes only; no naming or format-contract changes. All four issues were found by running
