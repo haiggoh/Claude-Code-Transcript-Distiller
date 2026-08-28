@@ -16,3 +16,7 @@ __pycache__/
 
 # Built release assets
 dist/
+
+# Local compat symlink: pre-0.7.0 entry-script name -> cc_transcript.py
+# (keeps $PATH entries and scripts written against the old filename working)
+compact_session_bundle.py
