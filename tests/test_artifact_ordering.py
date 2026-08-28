@@ -16,7 +16,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SPEC = importlib.util.spec_from_file_location("compact_session_bundle_artifact_ordering",
-                                              ROOT / "compact_session_bundle.py")
+                                              ROOT / "cc_transcript.py")
 MODULE = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = MODULE
 assert SPEC.loader is not None
@@ -104,7 +104,7 @@ class BatchWiringTests(unittest.TestCase):
 
     def _main_function(self):
         import ast
-        tree = ast.parse((ROOT / "compact_session_bundle.py").read_text(encoding="utf-8"))
+        tree = ast.parse((ROOT / "cc_transcript.py").read_text(encoding="utf-8"))
         for node in tree.body:
             if isinstance(node, ast.FunctionDef) and node.name == "main":
                 return node

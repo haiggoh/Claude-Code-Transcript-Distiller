@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-SPEC = importlib.util.spec_from_file_location("compact_session_bundle_migration_v3", ROOT / "compact_session_bundle.py")
+SPEC = importlib.util.spec_from_file_location("compact_session_bundle_migration_v3", ROOT / "cc_transcript.py")
 MODULE = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = MODULE
 assert SPEC.loader is not None

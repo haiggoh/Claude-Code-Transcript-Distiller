@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create portable, context-efficient bundles from Claude Code transcripts.
+"""Distill native Claude Code transcripts into compact, line-addressable evidence.
 
 Each selected session produces two canonical artifacts:
   .compact.jsonl.txt   transformed, line-addressable format-3 evidence
@@ -41,7 +41,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
-VERSION = "0.6.3"
+VERSION = "0.7.0"
 BUNDLE_FORMAT = 3
 PAYLOAD_INTERN_THRESHOLD = 1_000
 CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
@@ -800,7 +800,7 @@ def compact_records(
     compact_header = {
         **header,
         "__bundle_format__": BUNDLE_FORMAT,
-        "__generator__": f"compact_session_bundle.py {VERSION}",
+        "__generator__": f"cc_transcript.py {VERSION}",
         "__session_title__": session_title,
         "__omission_policy__": {
             "text_turns_truncated": False,
@@ -1206,7 +1206,7 @@ def make_capsule(source_name: str, compact_name: str, checksum: str, rows: list[
         "## Session identity and audit\n\n",
         f"- Source session: `{source_name}`\n- Compact source: `{compact_name}`\n",
         f"- Compact SHA-256: `{checksum}`\n- Compact lines: {len(rows)}\n",
-        f"- Generator: compact_session_bundle.py {VERSION}\n",
+        f"- Generator: cc_transcript.py {VERSION}\n",
         "- Generation is reproducible: no wall-clock timestamp is embedded.\n\n",
         "## Executive session summary\n\n",
     ]
@@ -1363,7 +1363,7 @@ def make_indexed_capsule(
         f"- Compact evidence: `{compact_name}`\n",
         f"- Compact SHA-256: `{checksum}`\n",
         f"- Compact lines: {len(rows)}\n",
-        f"- Generator: compact_session_bundle.py {VERSION}\n\n",
+        f"- Generator: cc_transcript.py {VERSION}\n\n",
     ]
     if continuation:
         out.extend([
@@ -1497,7 +1497,7 @@ def legacy_project(record: dict[str, Any]) -> dict[str, Any]:
 
 
 FORMAT2_DUPLICATE_PAYLOAD_MARKER = (
-    "<DUPLICATE OF message.content - stripped by compact_session_bundle.py>"
+    "<DUPLICATE OF message.content - stripped by cc_transcript.py>"
 )
 
 

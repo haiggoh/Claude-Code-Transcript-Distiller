@@ -14,18 +14,18 @@ def source_version() -> str:
     moves, and the artifact name is not something a release check tends to re-read. The
     same failure shipped a Homebrew formula pinned to a superseded release.
     """
-    text = (ROOT / "compact_session_bundle.py").read_text(encoding="utf-8")
+    text = (ROOT / "cc_transcript.py").read_text(encoding="utf-8")
     match = re.search(r'^VERSION\s*=\s*"([^"]+)"', text, re.MULTILINE)
     if not match:
-        raise SystemExit("FAIL: could not read VERSION from compact_session_bundle.py")
+        raise SystemExit("FAIL: could not read VERSION from cc_transcript.py")
     return match.group(1)
 
 
 VERSION = sys.argv[1] if len(sys.argv) > 1 else source_version()
 DIST = ROOT / "dist"
-PREFIX = f"claude-code-session-bundle-{VERSION}"
+PREFIX = f"claude-code-transcript-distiller-{VERSION}"
 FILES = [
-    "compact_session_bundle.py",
+    "cc_transcript.py",
     "README.md",
     "LICENSE",
     "CHANGELOG.md",
@@ -42,25 +42,25 @@ with tarfile.open(fileobj=raw, mode="w", format=tarfile.PAX_FORMAT) as tf:
         info.mtime = 0
         info.uid = info.gid = 0
         info.uname = info.gname = ""
-        info.mode = 0o755 if name == "compact_session_bundle.py" else 0o644
+        info.mode = 0o755 if name == "cc_transcript.py" else 0o644
         tf.addfile(info, io.BytesIO(data))
 archive.write_bytes(gzip.compress(raw.getvalue(), compresslevel=9, mtime=0))
 archive_sha = hashlib.sha256(archive.read_bytes()).hexdigest()
 
-installer = DIST / f"claude-code-session-bundle-installer-v{VERSION}.zsh"
+installer = DIST / f"claude-code-transcript-distiller-installer-v{VERSION}.zsh"
 installer.write_text(f'''#!/bin/zsh
 set -e
 version="{VERSION}"
 expected_sha="{archive_sha}"
-url="https://github.com/haiggoh/claude-code-session-bundle/releases/download/v{VERSION}/claude-code-session-bundle-{VERSION}.tar.gz"
-tmp="$(mktemp -d "${{TMPDIR:-/tmp}}/cc-session-bundle.XXXXXX")"
+url="https://github.com/haiggoh/claude-code-transcript-distiller/releases/download/v{VERSION}/claude-code-transcript-distiller-{VERSION}.tar.gz"
+tmp="$(mktemp -d "${{TMPDIR:-/tmp}}/cc-transcript.XXXXXX")"
 trap 'rm -rf "$tmp"' EXIT
 archive="$tmp/bundle.tar.gz"
-if [[ -n "${{CC_SESSION_BUNDLE_ARCHIVE:-}}" ]]; then
-  cp "$CC_SESSION_BUNDLE_ARCHIVE" "$archive"
+if [[ -n "${{CC_TRANSSCRIPT_ARCHIVE:-}}" ]]; then
+  cp "$CC_TRANSSCRIPT_ARCHIVE" "$archive"
   print "PASS: using local release archive."
 elif curl -fL --retry 3 -o "$archive" "$url"; then
-  print "PASS: downloaded Claude Code Session Bundle v$version."
+  print "PASS: downloaded Claude Code Transcript Distiller v$version."
 else
   exit_status=$?
   print -u2 "FAIL: download exited with status $exit_status."
@@ -70,8 +70,8 @@ actual_sha="$(shasum -a 256 "$archive" | awk '{{print $1}}')"
 [[ "$actual_sha" == "$expected_sha" ]] || {{ print -u2 "FAIL: archive checksum mismatch."; exit 1; }}
 print "PASS: archive checksum verified."
 tar -xzf "$archive" -C "$tmp"
-source_dir="$tmp/claude-code-session-bundle-$version"
-root="$HOME/.local/share/claude-code-session-bundle"
+source_dir="$tmp/claude-code-transcript-distiller-$version"
+root="$HOME/.local/share/claude-code-transcript-distiller"
 destination="$root/current"
 staging="$root/.staging-$$"
 backup="$root/.previous-$(date '+%Y%m%d-%H%M%S')"
@@ -80,11 +80,11 @@ rm -rf "$staging"
 cp -R "$source_dir" "$staging"
 if [[ -e "$destination" ]]; then mv "$destination" "$backup"; print "PASS: previous installation backed up to $backup"; fi
 mv "$staging" "$destination"
-chmod 755 "$destination/compact_session_bundle.py"
-ln -sfn "$destination/compact_session_bundle.py" "$HOME/.local/bin/cc-transcript"
-python3 -m py_compile "$destination/compact_session_bundle.py"
+chmod 755 "$destination/cc_transcript.py"
+ln -sfn "$destination/cc_transcript.py" "$HOME/.local/bin/cc-transcript"
+python3 -m py_compile "$destination/cc_transcript.py"
 rm -rf "$destination/__pycache__"
-print "PASS: installed Claude Code Session Bundle v$version."
+print "PASS: installed Claude Code Transcript Distiller v$version."
 print "Command: $HOME/.local/bin/cc-transcript"
 if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
   print 'INFO: add this to ~/.zshrc: export PATH="$HOME/.local/bin:$PATH"'

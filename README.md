@@ -1,14 +1,14 @@
-# Claude Code Session Bundle
+# Claude Code Transcript Distiller
 
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Standard library](https://img.shields.io/badge/Python%20packages-standard%20library%20only-brightgreen.svg)](#requirements)
 
-**Compact and index Claude Code JSONL transcripts for review, archival, and context handoff to other LLMs.**
+**Compact evidence and indexed handoff for native Claude Code transcripts.**
 
-Claude Code Session Bundle is a Python CLI for exporting Claude Code session transcripts as smaller, portable, line-addressable artifacts. It is intended for carrying established context into ChatGPT, Gemini, another LLM, a code-review workflow, or an archival system without including as much repetitive metadata, usage accounting, duplicated tool output, and other structural noise.
+Claude Code Transcript Distiller is a Python CLI for distilling native Claude Code session transcripts into compact, portable, line-addressable artifacts. It is intended for carrying established context into ChatGPT, Gemini, another LLM, a code-review workflow, or an archival system without including as much repetitive metadata, usage accounting, duplicated tool output, and other structural noise.
 
-Unlike a plain generated summary, the bundle retains a compact transcript as its evidence layer and generates an indexed capsule as the primary standalone handoff.
+Unlike a plain generated summary, the distiller retains a compact transcript as its evidence layer and generates an indexed capsule as the primary standalone handoff.
 
 > [!IMPORTANT]
 > Compaction is semantic and structural, not byte-for-byte lossless. The original Claude Code JSONL remains the authoritative raw source and should be retained whenever exact provenance matters.
@@ -42,7 +42,7 @@ Unlike a plain generated summary, the bundle retains a compact transcript as its
 Run the interactive selector:
 
 ```zsh
-python3 compact_session_bundle.py
+python3 cc_transcript.py
 ```
 
 Select one or more sessions using a number, list, or range:
@@ -156,19 +156,19 @@ On macOS, the strongest active-session detection optionally invokes the system `
 ### Homebrew — recommended
 
 ```zsh
-brew install haiggoh/tap/claude-code-session-bundle
+brew install haiggoh/tap/claude-code-transcript-distiller
 cc-transcript --version
 ```
 
 ### Standalone release installer
 
 ```zsh
-curl -fLO https://github.com/haiggoh/claude-code-session-bundle/releases/download/v0.6.1/claude-code-session-bundle-installer-v0.6.1.zsh
-zsh -n claude-code-session-bundle-installer-v0.6.1.zsh
-zsh claude-code-session-bundle-installer-v0.6.1.zsh
+curl -fLO https://github.com/haiggoh/claude-code-transcript-distiller/releases/download/v0.7.0/claude-code-transcript-distiller-installer-v0.7.0.zsh
+zsh -n claude-code-transcript-distiller-installer-v0.7.0.zsh
+zsh claude-code-transcript-distiller-installer-v0.7.0.zsh
 ```
 
-The installer verifies the release archive, installs source under `~/.local/share/claude-code-session-bundle/current`, and creates `~/.local/bin/cc-transcript`. If `~/.local/bin` is not on `PATH`, it prints the line to add to `~/.zshrc`.
+The installer verifies the release archive, installs source under `~/.local/share/claude-code-transcript-distiller/current`, and creates `~/.local/bin/cc-transcript`. If `~/.local/bin` is not on `PATH`, it prints the line to add to `~/.zshrc`.
 
 Release assets also include a reproducible source archive and `SHA256SUMS`.
 
@@ -474,7 +474,7 @@ Unexplained differences remain blocked.
 
 ## Command reference
 ```text
-compact_session_bundle.py [INPUT]
+cc_transcript.py [INPUT]
 
   --current
   -o, --output-dir DIRECTORY
@@ -563,21 +563,21 @@ Use this when you want Claude Code or another development tool to maintain the r
 
 ```zsh
 mkdir -p "$HOME/ClaudeWorkspace"
-git clone https://github.com/haiggoh/claude-code-session-bundle.git "$HOME/ClaudeWorkspace/claude-code-session-bundle"
-python3 "$HOME/ClaudeWorkspace/claude-code-session-bundle/compact_session_bundle.py"
+git clone https://github.com/haiggoh/claude-code-transcript-distiller.git "$HOME/ClaudeWorkspace/claude-code-transcript-distiller"
+python3 "$HOME/ClaudeWorkspace/claude-code-transcript-distiller/cc_transcript.py"
 ```
 
 ### Claude-local standalone copy
 
 ```zsh
 mkdir -p "$HOME/.claude/scripts"
-install -m 700 compact_session_bundle.py "$HOME/.claude/scripts/compact_session_bundle.py"
+install -m 700 cc_transcript.py "$HOME/.claude/scripts/cc_transcript.py"
 ```
 
 ### Run directly from any clone
 
 ```zsh
-python3 compact_session_bundle.py
+python3 cc_transcript.py
 ```
 
 These layouts are useful for development or custom setups. Homebrew or the standalone release installer is preferred for routine use.
@@ -589,13 +589,13 @@ These layouts are useful for development or custom setups. Homebrew or the stand
 Run a syntax check:
 
 ```zsh
-python3 -m py_compile compact_session_bundle.py
+python3 -m py_compile cc_transcript.py
 ```
 
 Check the version:
 
 ```zsh
-python3 compact_session_bundle.py --version
+python3 cc_transcript.py --version
 ```
 
 The current release includes a standard-library regression suite and has also been validated against real Claude Code transcripts.

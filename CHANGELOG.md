@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.7.0
+
+The project is now **Claude Code Transcript Distiller**. It is a standalone CLI, not a plugin or
+a skill, and "bundle" stopped describing what it produces once format 3 retired the two
+sidecar artifacts in favor of one compact evidence file plus one indexed handoff.
+
+- The entry script is renamed `compact_session_bundle.py` → `cc_transcript.py` (the installed
+  command stays `cc-transcript`, so nothing in everyday usage changes).
+- The GitHub repository moves `claude-code-session-bundle` → `claude-code-transcript-distiller`
+  (GitHub redirects both web and git from the old slug, so existing clones keep working, but
+  prefer the new URL).
+- Release assets are renamed in lockstep: `claude-code-transcript-distiller-0.7.0.tar.gz` and a
+  matching installer. The Homebrew tap formula moves with an `oldname` alias so existing
+  installs migrate instead of breaking.
+- **This is not a format break.** The `__generator__` header line now reads
+  `cc_transcript.py 0.7.0`, but existing-bundle classification only compares record bodies,
+  never the header — bundles produced by earlier releases still classify as
+  `identical`/`extension` after the rename.
+
 ## 0.6.3
 
 Artifact ordering on disk. A run's artifacts all landed inside the same second, and a filesystem

@@ -1,6 +1,6 @@
 # Compact Bundle Format 3
 
-Compact bundle format 3 is the evidence format introduced by Claude Code Session Bundle v0.6.0. It reduces duplication and binary payload size while preserving chronological, line-addressable evidence and making every omission or reference explicit.
+Compact bundle format 3 is the evidence format introduced by Claude Code Transcript Distiller v0.6.0. It reduces duplication and binary payload size while preserving chronological, line-addressable evidence and making every omission or reference explicit.
 
 This document describes durable format rules and compatibility invariants. The original Claude Code JSONL transcript remains the authoritative raw source.
 
@@ -77,14 +77,17 @@ The first compact JSONL line contains:
 {
   "__compact_session_header__": {
     "__bundle_format__": 3,
-    "__generator__": "compact_session_bundle.py 0.6.2"
+    "__generator__": "cc_transcript.py 0.7.0"
   }
 }
 ```
 
-The generator string carries the producing version, so it changes on every release. This does
-not affect existing-bundle classification: comparison operates on record bodies and never on
-the header line, so a bundle produced by an earlier 0.6.x still classifies as current.
+The generator string carries the producing version, so it changes on every release. It also
+changed *filename* at 0.7.0 — the entry script was renamed `compact_session_bundle.py` →
+`cc_transcript.py` as part of the project rename to Claude Code Transcript Distiller. Neither
+the version bump nor the rename affects existing-bundle classification: comparison operates on
+record bodies and never on the header line, so a bundle produced by an earlier release still
+classifies as `identical`/`extension` after the rename.
 
 The full header also records available source and session identity, source filename and SHA-256, source physical-line count, stable-snapshot metadata, invariant hoisted fields, conflicts, resolved title, omission policy, transformation accounting, and sparse navigation.
 

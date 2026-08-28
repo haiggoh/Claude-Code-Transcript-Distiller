@@ -12,9 +12,9 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def packaged_version() -> str:
-    text = (ROOT / "compact_session_bundle.py").read_text(encoding="utf-8")
+    text = (ROOT / "cc_transcript.py").read_text(encoding="utf-8")
     match = re.search(r'^VERSION\s*=\s*"([^"]+)"', text, re.MULTILINE)
-    assert match, "compact_session_bundle.py must declare VERSION"
+    assert match, "cc_transcript.py must declare VERSION"
     return match.group(1)
 
 
@@ -23,7 +23,7 @@ class ReleaseBuilderTests(unittest.TestCase):
         """Run the builder against a copy of the repo and return its dist directory."""
         workspace = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, workspace)
-        for name in ("compact_session_bundle.py", "README.md", "LICENSE", "CHANGELOG.md"):
+        for name in ("cc_transcript.py", "README.md", "LICENSE", "CHANGELOG.md"):
             shutil.copy2(ROOT / name, workspace / name)
         (workspace / "docs").mkdir()
         shutil.copy2(ROOT / "docs/compact-format-3.md", workspace / "docs/compact-format-3.md")
@@ -41,20 +41,20 @@ class ReleaseBuilderTests(unittest.TestCase):
         # went unnoticed and it produced a 0.6.1-named archive from a 0.6.2 source.
         version = packaged_version()
         dist = self.build()
-        archive = dist / f"claude-code-session-bundle-{version}.tar.gz"
+        archive = dist / f"claude-code-transcript-distiller-{version}.tar.gz"
         self.assertTrue(archive.is_file(), f"expected an archive named for version {version}")
-        self.assertTrue((dist / f"claude-code-session-bundle-installer-v{version}.zsh").is_file())
+        self.assertTrue((dist / f"claude-code-transcript-distiller-installer-v{version}.zsh").is_file())
         with tarfile.open(archive, "r:gz") as handle:
             names = set(handle.getnames())
-        self.assertIn(f"claude-code-session-bundle-{version}/compact_session_bundle.py", names)
-        self.assertIn(f"claude-code-session-bundle-{version}/docs/compact-format-3.md", names)
+        self.assertIn(f"claude-code-transcript-distiller-{version}/cc_transcript.py", names)
+        self.assertIn(f"claude-code-transcript-distiller-{version}/docs/compact-format-3.md", names)
         self.assertFalse(any("/tests/" in name for name in names))
 
     def test_explicit_version_argument_overrides_the_source_version(self):
         dist = self.build("9.9.9")
-        self.assertTrue((dist / "claude-code-session-bundle-9.9.9.tar.gz").is_file())
+        self.assertTrue((dist / "claude-code-transcript-distiller-9.9.9.tar.gz").is_file())
         self.assertFalse(
-            (dist / f"claude-code-session-bundle-{packaged_version()}.tar.gz").is_file(),
+            (dist / f"claude-code-transcript-distiller-{packaged_version()}.tar.gz").is_file(),
             "an explicit version must not also emit a source-versioned archive",
         )
 

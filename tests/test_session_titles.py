@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-SPEC = importlib.util.spec_from_file_location("compact_session_bundle", ROOT / "compact_session_bundle.py")
+SPEC = importlib.util.spec_from_file_location("compact_session_bundle", ROOT / "cc_transcript.py")
 MODULE = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = MODULE
 assert SPEC.loader is not None
@@ -127,8 +127,8 @@ class SessionTitleTests(unittest.TestCase):
     def test_picker_project_omits_home_and_uses_cwd_basename(self):
         self.assertEqual(MODULE.picker_project_name(str(Path.home())), "")
         self.assertEqual(
-            MODULE.picker_project_name("/tmp/claude-code-session-bundle"),
-            "claude-code-session-bundle",
+            MODULE.picker_project_name("/tmp/claude-code-transcript-distiller"),
+            "claude-code-transcript-distiller",
         )
         self.assertEqual(MODULE.picker_project_name(""), "")
 
