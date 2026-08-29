@@ -21,7 +21,15 @@ def source_version() -> str:
     return match.group(1)
 
 
-VERSION = sys.argv[1] if len(sys.argv) > 1 else source_version()
+SOURCE_VERSION = source_version()
+if len(sys.argv) > 2:
+    raise SystemExit("FAIL: usage: build-release.py [VERSION]")
+if len(sys.argv) == 2 and sys.argv[1] != SOURCE_VERSION:
+    raise SystemExit(
+        f"FAIL: requested version {sys.argv[1]} does not match "
+        f"cc_transcript.py VERSION {SOURCE_VERSION}"
+    )
+VERSION = SOURCE_VERSION
 DIST = ROOT / "dist"
 PREFIX = f"claude-code-transcript-distiller-{VERSION}"
 FILES = [

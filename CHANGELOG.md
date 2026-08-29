@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Enforce release-version integrity by rejecting a requested version that differs from the packaged CLI.
+- Add picker status, complete-list selection, counted expansion, and navigation-key handling.
+- Default verified extensions to numbered continuations and clarify amend/overlap semantics.
+
 ## 0.7.0
 
 The project is now **Claude Code Transcript Distiller**. It is a standalone CLI, not a plugin or

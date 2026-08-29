@@ -138,11 +138,30 @@ class ReleaseVersionSourceTests(unittest.TestCase):
                             "a hardcoded version fallback silently mis-names release artifacts")
         self.assertIn("def source_version", source)
 
-    def test_packaged_version_matches_the_changelog_top_entry(self):
+
+    def test_packaged_version_matches_the_latest_release_entry(self):
         changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
-        first = next(line for line in changelog.splitlines() if line.startswith("## "))
-        self.assertEqual(f"## {MODULE.VERSION}", first.strip(),
-                         "the newest changelog heading must describe the version being shipped")
+        headings = [
+            line.strip()
+            for line in changelog.splitlines()
+            if line.startswith("## ")
+        ]
+        self.assertTrue(
+            headings,
+            "the changelog must contain at least one version heading",
+        )
+        if headings[0].casefold() == "## unreleased":
+            headings = headings[1:]
+        self.assertTrue(
+            headings,
+            "an Unreleased section must be followed by a released version",
+        )
+        self.assertEqual(
+            f"## {MODULE.VERSION}",
+            headings[0],
+            "the newest released changelog heading must describe "
+            "the version being shipped",
+        )
 
 
 if __name__ == "__main__":

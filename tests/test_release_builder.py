@@ -50,13 +50,30 @@ class ReleaseBuilderTests(unittest.TestCase):
         self.assertIn(f"claude-code-transcript-distiller-{version}/docs/compact-format-3.md", names)
         self.assertFalse(any("/tests/" in name for name in names))
 
-    def test_explicit_version_argument_overrides_the_source_version(self):
-        dist = self.build("9.9.9")
-        self.assertTrue((dist / "claude-code-transcript-distiller-9.9.9.tar.gz").is_file())
-        self.assertFalse(
-            (dist / f"claude-code-transcript-distiller-{packaged_version()}.tar.gz").is_file(),
-            "an explicit version must not also emit a source-versioned archive",
+    def test_explicit_version_must_match_the_source_version(self):
+        version = packaged_version()
+        dist = self.build(version)
+        self.assertTrue(
+            (dist / f"claude-code-transcript-distiller-{version}.tar.gz").is_file()
         )
+
+    def test_mismatched_explicit_version_is_rejected(self):
+        workspace = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, workspace)
+        for name in ("cc_transcript.py", "README.md", "LICENSE", "CHANGELOG.md"):
+            shutil.copy2(ROOT / name, workspace / name)
+        (workspace / "docs").mkdir()
+        shutil.copy2(ROOT / "docs/compact-format-3.md", workspace / "docs/compact-format-3.md")
+        (workspace / "scripts").mkdir()
+        shutil.copy2(ROOT / "scripts/build-release.py", workspace / "scripts/build-release.py")
+        result = subprocess.run(
+            [sys.executable, "scripts/build-release.py", "9.9.9"],
+            cwd=workspace, capture_output=True, text=True,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("does not match", result.stderr + result.stdout)
+        self.assertFalse((workspace / "dist").exists())
+
 
     def test_checksums_cover_every_built_artifact(self):
         dist = self.build()
