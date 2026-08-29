@@ -1984,6 +1984,92 @@ def format_picker_size(size: int) -> str:
     return f"{size} B"
 
 
+ANSI_ESCAPE_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+PICKER_COLORS = {"green": "32", "yellow": "33", "red": "31"}
+
+
+def strip_terminal_escape_sequences(text: str) -> tuple[str, bool]:
+    """Remove terminal control sequences before parsing picker input."""
+    cleaned = ANSI_ESCAPE_RE.sub("", text)
+    return cleaned, cleaned != text
+
+
+def parse_more_command(text: str) -> int | None:
+    """Return ten-row batches requested by m, mmmmm, or m5."""
+    value = text.strip().lower()
+    if re.fullmatch(r"m+", value):
+        return len(value)
+    match = re.fullmatch(r"m(\d+)", value)
+    if match and int(match.group(1)) > 0:
+        return int(match.group(1))
+    return None
+
+
+def picker_color_enabled(stream: Any = None) -> bool:
+    stream = sys.stdout if stream is None else stream
+    return bool(
+        os.environ.get("NO_COLOR") is None
+        and hasattr(stream, "isatty")
+        and stream.isatty()
+    )
+
+
+def picker_terminal_control_enabled(stream: Any = None) -> bool:
+    stream = sys.stdout if stream is None else stream
+    return bool(hasattr(stream, "isatty") and stream.isatty())
+
+
+def style_picker_status(text: str, color: str, enabled: bool | None = None) -> str:
+    if enabled is None:
+        enabled = picker_color_enabled()
+    if not enabled or color not in PICKER_COLORS:
+        return text
+    return f"\x1b[1;{PICKER_COLORS[color]}m{text}\x1b[0m"
+
+
+def picker_bundle_status(
+    transcript_path: Path,
+    output_dir: Path,
+) -> tuple[str, str]:
+    """Return an honest artifact/source status for picker prioritization."""
+    stem = base_name(transcript_path)
+    output_dir = output_dir.expanduser().resolve()
+    compact = output_dir / f"{stem}.compact.jsonl.txt"
+    indexed = output_dir / f"{stem}.indexed_capsule.md"
+    if not compact.is_file() and not indexed.is_file():
+        return "", ""
+    if compact.is_file() != indexed.is_file():
+        return "partial artifacts", "red"
+    try:
+        header = read_jsonl(compact)[0]["__compact_session_header__"]
+        current_size = transcript_path.stat().st_size
+        snapshot_size = header.get("__snapshot_size__")
+        source_sha = header.get("__source_sha256__")
+        if isinstance(snapshot_size, int):
+            if current_size > snapshot_size:
+                return "new tail to verify", "yellow"
+            if current_size < snapshot_size:
+                return "source shrank", "red"
+        if isinstance(source_sha, str) and source_sha:
+            actual_sha = hashlib.sha256(transcript_path.read_bytes()).hexdigest()
+            if actual_sha == source_sha:
+                return "current", "green"
+            return "source changed", "red"
+    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+        return "artifacts unreadable", "red"
+    return "artifacts present", "green"
+
+
+def erase_picker_controls(line_count: int) -> None:
+    """Clear the prior controls and prompt so more rows insert above them."""
+    if not picker_terminal_control_enabled() or line_count < 1:
+        return
+    for _ in range(line_count):
+        sys.stdout.write("\x1b[1A\x1b[2K")
+    sys.stdout.flush()
+
+
+
 def picker_size_summary(
     transcript_path: Path,
     output_dir: Path,
@@ -2048,22 +2134,22 @@ def picker(output_dir: Path = DEFAULT_OUTPUT_DIR) -> list[Path] | None:
     active = detect_active_sessions(files)
     metadata_cache: dict[Path, PickerMetadata] = {}
     size_cache: dict[Path, str] = {}
-    # Keep chronological ordering stable; markers can identify several sessions.
-    shown_count = 5
+    status_cache: dict[Path, tuple[str, str]] = {}
+    shown_count = min(5, len(files))
+    printed_count = 0
+    active_indices = [
+        index for index, session_path in enumerate(files, 1)
+        if session_path in active
+    ]
+
+    print("\nRecent Claude Code sessions:\n")
+    print("Sizes: transcript [compact JSONL | indexed capsule]\n")
     while True:
-        shown = files[:shown_count]
-        print("\nRecent Claude Code sessions:\n")
-        print("Sizes: transcript [compact JSONL | indexed capsule]\n")
-        active_indices: list[int] = []
-        for index, session_path in enumerate(shown, 1):
+        for index in range(printed_count + 1, shown_count + 1):
+            session_path = files[index - 1]
             method = active.get(session_path)
-            if method:
-                active_indices.append(index)
             stat_result = session_path.stat()
-            if session_path not in metadata_cache:
-                metadata_cache[session_path] = resolve_picker_metadata(
-                    session_path
-                )
+            metadata_cache.setdefault(session_path, resolve_picker_metadata(session_path))
             metadata = metadata_cache[session_path]
             activity_text = {
                 "open-file": "writing now",
@@ -2071,57 +2157,94 @@ def picker(output_dir: Path = DEFAULT_OUTPUT_DIR) -> list[Path] | None:
                 "recent-activity": "recently active",
                 "recent-size-fallback": "recent fallback",
             }.get(method, method or "")
-            marker = f"  <-- {activity_text}" if activity_text else ""
-            if session_path not in size_cache:
-                size_cache[session_path] = picker_size_summary(
-                    session_path,
-                    output_dir,
-                )
-            size_text = size_cache[session_path]
+            activity_marker = f"  <-- {activity_text}" if activity_text else ""
+            size_cache.setdefault(
+                session_path, picker_size_summary(session_path, output_dir)
+            )
+            status_cache.setdefault(
+                session_path, picker_bundle_status(session_path, output_dir)
+            )
+            status_text, status_color = status_cache[session_path]
+            status_marker = (
+                "  " + style_picker_status(f"[{status_text}]", status_color)
+                if status_text else ""
+            )
             project = picker_project_name(metadata.cwd)
             project_text = f" · project: {project}" if project else ""
-            print(f"  [{index}] {metadata.label.text}{marker}")
+            print(f"  [{index}] {metadata.label.text}{activity_marker}{status_marker}")
             print(
-                f"      ID: {session_path.stem} · {size_text} · "
+                f"      ID: {session_path.stem} · {size_cache[session_path]} · "
                 f"{datetime.fromtimestamp(stat_result.st_mtime):%Y-%m-%d %H:%M}"
                 f"{project_text}"
             )
             print()
-        if len(files) > shown_count:
-            print(f"  [m] show {min(10, len(files)-shown_count)} more")
+        printed_count = shown_count
+
+        remaining = len(files) - shown_count
+        if remaining:
+            print(
+                f"  [m] show {min(10, remaining)} more "
+                f"([m5] five batches, [mmmmm] same)"
+            )
+        print(f"  Any session number 1-{len(files)} is selectable.")
         print("  [q] quit")
         default_indices = active_indices or [1]
         default_text = ",".join(map(str, default_indices))
         default_note = "active candidates" if active_indices else "most recent"
-        choice = input(
-            f"\nSelect one or more sessions [default: {default_text}, {default_note}]: "
+        raw_choice = input(
+            f"\nSelect one or more sessions "
+            f"[default: {default_text}, {default_note}]: "
         ).strip().lower()
+        choice, stripped_escape = strip_terminal_escape_sequences(raw_choice)
+        choice = choice.strip()
+        if stripped_escape and not choice:
+            print("Ignored a navigation key; enter q, m, or session numbers.")
+            continue
         if not choice:
-            return [shown[index - 1] for index in default_indices]
+            return [files[index - 1] for index in default_indices]
         if choice in {"q", "quit", "exit"}:
             return None
-        if choice == "m" and shown_count < len(files):
-            shown_count = min(shown_count + 10, len(files))
+        more_batches = parse_more_command(choice)
+        if more_batches is not None and remaining:
+            erase_picker_controls(4)
+            shown_count = min(shown_count + 10 * more_batches, len(files))
             continue
         try:
-            indices = parse_selection(choice, len(shown))
-            return [shown[index - 1] for index in indices]
+            indices = parse_selection(choice, len(files))
+            return [files[index - 1] for index in indices]
         except ValueError as error:
             print(f"Not a valid selection: {error}")
 
 
-def prompt_existing_mode(relationship: str) -> str | None:
+
+def prompt_existing_mode(
+    relationship: str,
+    existing_parts: Sequence[Path] = (),
+) -> str | None:
     print(f"\nAn existing bundle was detected ({relationship}).")
     if relationship == "extension":
-        print("  [a] amend the complete bundle with the verified new tail (default)")
-        print("  [c] write only the new tail as a numbered continuation")
+        print("  [c] write only the verified new tail as a numbered continuation (default)")
+        print("  [a] rewrite the complete canonical bundle from the full raw transcript")
+        if existing_parts:
+            names = ", ".join(path.name for path in existing_parts[-3:])
+            print(
+                "  CAUTION: numbered parts already exist. A new part is relative "
+                "to the canonical complete bundle and can overlap them."
+            )
+            print(f"  Existing part files include: {names}")
+        print("  Amend rewrites only the canonical pair; numbered parts remain unchanged.")
     elif relationship in {"legacy-migration", "format2-migration", "format2-extension"}:
         print("  [a] migrate and replace the verified older-format bundle (default)")
     print("  [r] refuse replacement and skip this session")
     print("  [q] stop the current export batch")
     while True:
-        choice = input("Choose existing-bundle behavior [default: a]: ").strip().lower()
-        if choice in {"", "a", "amend"}:
+        default = "continuation" if relationship == "extension" else "amend"
+        choice = input(
+            f"Choose existing-bundle behavior [default: {default[0]}]: "
+        ).strip().lower()
+        if choice == "":
+            return default
+        if choice in {"a", "amend"}:
             return "amend"
         if relationship == "extension" and choice in {"c", "continuation"}:
             return "continuation"
@@ -2130,6 +2253,7 @@ def prompt_existing_mode(relationship: str) -> str | None:
         if choice in {"q", "quit"}:
             return None
         print("Not a valid choice, try again.")
+
 
 
 def iter_binary_metadata(value: Any) -> Iterable[tuple[str, dict[str, Any]]]:
@@ -2372,7 +2496,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--overwrite", action="store_true", help="Allow replacement only after identity/extension checks; use --force for unrelated content")
     parser.add_argument("--force", action="store_true", help="DANGEROUS: replace a non-extension or truncated existing bundle")
     parser.add_argument("--existing", choices=("amend", "continuation", "refuse"), default=None,
-                        help="Existing-bundle behavior. In picker mode this is prompted interactively when omitted; otherwise defaults to amend")
+                        help="Existing-bundle behavior. Extensions default to continuation; migrations default to amend")
     parser.add_argument("--no-snapshot", action="store_true", help="Read the source directly instead of taking a stable snapshot")
     parser.add_argument("--permissive", action="store_true", help="Preserve malformed input as marked records")
     parser.add_argument("--keep-base64", action="store_true",
@@ -2436,9 +2560,12 @@ def export_session(
                 "Refusing destructive replacement."
             )
 
-        existing_mode = args.existing or "amend"
+        existing_mode = args.existing or (
+            "continuation" if relationship == "extension" else "amend"
+        )
         if interactive and args.existing is None and relationship in {"extension", "legacy-migration", "format2-migration", "format2-extension"}:
-            chosen = prompt_existing_mode(relationship)
+            existing_parts = sorted(output_dir.glob(f"{stem}.part*.compact.jsonl.txt"))
+            chosen = prompt_existing_mode(relationship, existing_parts)
             if chosen is None:
                 return "batch stopped before export", [], True
             existing_mode = chosen

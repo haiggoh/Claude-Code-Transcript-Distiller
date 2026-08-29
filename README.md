@@ -194,7 +194,7 @@ session 1-3
 sessions 3 to 1
 ```
 
-Ranges include both endpoints. Duplicate selections are removed while preserving order.
+Ranges include both endpoints. Duplicate selections are removed while preserving order. Session numbers refer to the complete stable list, so an existing session can be selected before its row is displayed. Use `m`, repeated `m`, or `m5` to reveal more rows. Navigation escape sequences are ignored.
 
 After processing a batch, the tool:
 
@@ -207,7 +207,7 @@ After processing a batch, the tool:
 
 Picker labels follow Claude Code's display precedence: the latest custom title, latest AI-generated title, latest summary, first meaningful non-meta user prompt, then a project fallback. Labels are read defensively from the internal JSONL format, redacted, normalized to one line, bounded in length, and cached for the current invocation. The complete session UUID remains visible beneath every title. Sessions without usable title or prompt text are shown as `Untitled session`.
 
-The picker displays sizes as `transcript [compact JSONL | indexed capsule]`. Brackets appear only when at least one canonical artifact exists; `—` marks one missing artifact in a partial pair. Continuation files are not included. The project field is omitted for sessions whose latest valid CWD is the user's home directory; other sessions show only the CWD basename.
+The picker displays sizes as `transcript [compact JSONL | indexed capsule]`. Brackets appear only when at least one canonical artifact exists; `—` marks one missing artifact in a partial pair. Continuation files are not included. Bold traffic-light status marks current, source-grown, partial, unreadable, shrunk, or changed bundles; a yellow `new tail to verify` marker is prioritization, not replacement authorization. The project field is omitted for home-directory sessions; other sessions show only the CWD basename.
 
 Activity markers state the observed signal: `writing now`, `session ID match`, `recently active`, or `recent fallback`. These signals are merged, so one transcript being open for writing does not hide other idle but recently active sessions.
 
@@ -243,12 +243,14 @@ Amendment regenerates the complete bundle from the current raw transcript. It is
 cc-transcript --existing continuation
 ```
 
-Continuation mode creates only:
+Continuation mode defaults to the verified new tail. The first continuation is `part2`; later continuations use the next `partN`:
 
 ```text
-SESSION.part2.compact.jsonl.txt
-SESSION.part2.indexed_capsule.md
+SESSION.partN.compact.jsonl.txt
+SESSION.partN.indexed_capsule.md
 ```
+
+`--existing amend` rewrites the canonical pair from the full raw transcript; it does not rewrite or delete numbered parts.
 
 Continuation metadata records:
 
@@ -523,7 +525,7 @@ No. The source transcript is read or copied into a temporary snapshot. Generated
 
 ### Is this a Claude Code plugin?
 
-No. The current release is a standalone Python CLI related to Claude Code. It is not packaged as a Claude Code plugin.
+No. The current release is a standalone Python CLI. A separate optional companion skill is planned but is not part of this bug-and-picker slice.
 
 ### Is the output lossless?
 
@@ -639,6 +641,10 @@ Do not attach raw transcripts containing secrets, proprietary source code, custo
 - Later continuation parts may overlap earlier ones unless the canonical bundle is amended between exports.
 - Cross-platform behavior has not yet been covered by a published automated test suite.
 - The tool does not upload, synchronize, or resume sessions automatically.
+
+## Current development
+
+This bug-and-picker slice covers release-version integrity, new-tail prioritization, complete-list selection, counted list expansion, navigation-key handling, continuation-first extensions, and clearer continuation semantics. A separate approved companion-skill slice will invoke the installed CLI without bundling another implementation. These are development directions until released.
 
 ## License
 
