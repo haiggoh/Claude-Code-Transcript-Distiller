@@ -60,7 +60,7 @@ installer.write_text(f'''#!/bin/zsh
 set -e
 version="{VERSION}"
 expected_sha="{archive_sha}"
-url="https://github.com/haiggoh/claude-code-transcript-distiller/releases/download/v{VERSION}/claude-code-transcript-distiller-{VERSION}.tar.gz"
+url="https://github.com/haiggoh/Claude-Code-Transcript-Distiller/releases/download/v{VERSION}/claude-code-transcript-distiller-{VERSION}.tar.gz"
 tmp="$(mktemp -d "${{TMPDIR:-/tmp}}/cc-transcript.XXXXXX")"
 trap 'rm -rf "$tmp"' EXIT
 archive="$tmp/bundle.tar.gz"

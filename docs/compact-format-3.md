@@ -77,7 +77,7 @@ The first compact JSONL line contains:
 {
   "__compact_session_header__": {
     "__bundle_format__": 3,
-    "__generator__": "cc_transcript.py 0.7.0"
+    "__generator__": "cc_transcript.py 0.8.0"
   }
 }
 ```

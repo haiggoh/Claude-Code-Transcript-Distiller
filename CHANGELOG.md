@@ -1,10 +1,17 @@
 # Changelog
 
-## Unreleased
+## 0.8.0
 
-- Enforce release-version integrity by rejecting a requested version that differs from the packaged CLI.
-- Add picker status, complete-list selection, counted expansion, and navigation-key handling.
-- Default verified extensions to numbered continuations and clarify amend/overlap semantics.
+Picker and continuation workflow improvements, plus release-integrity hardening.
+
+- Reject a requested release-builder version when it differs from the packaged CLI version.
+- Add traffic-light source/bundle status markers, including a prioritization-only `new tail to verify` marker.
+- Allow selection from the complete stable session list, including rows not currently displayed.
+- Support counted and repeated list expansion with `m`, `m5`, and repeated `m` forms.
+- Ignore terminal navigation escape sequences instead of parsing them as selections.
+- Default verified extensions to numbered continuations and clarify amendment and overlap behavior.
+- Treat declining another export after a successful batch as a normal zero-status exit.
+- Keep compact bundle format 3 unchanged.
 
 ## 0.7.0
 

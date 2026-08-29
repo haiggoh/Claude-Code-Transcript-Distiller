@@ -35,6 +35,7 @@ Unlike a plain generated summary, the distiller retains a compact transcript as 
 - [Alternative installation layouts](#alternative-installation-layouts)
 - [Development and compatibility](#development-and-compatibility)
 - [Limitations](#limitations)
+- [Current development](#current-development)
 - [License](#license)
 
 ## Quick start
@@ -163,9 +164,9 @@ cc-transcript --version
 ### Standalone release installer
 
 ```zsh
-curl -fLO https://github.com/haiggoh/claude-code-transcript-distiller/releases/download/v0.7.0/claude-code-transcript-distiller-installer-v0.7.0.zsh
-zsh -n claude-code-transcript-distiller-installer-v0.7.0.zsh
-zsh claude-code-transcript-distiller-installer-v0.7.0.zsh
+curl -fLO https://github.com/haiggoh/Claude-Code-Transcript-Distiller/releases/download/v0.8.0/claude-code-transcript-distiller-installer-v0.8.0.zsh
+zsh -n claude-code-transcript-distiller-installer-v0.8.0.zsh
+zsh claude-code-transcript-distiller-installer-v0.8.0.zsh
 ```
 
 The installer verifies the release archive, installs source under `~/.local/share/claude-code-transcript-distiller/current`, and creates `~/.local/bin/cc-transcript`. If `~/.local/bin` is not on `PATH`, it prints the line to add to `~/.zshrc`.
@@ -525,7 +526,7 @@ No. The source transcript is read or copied into a temporary snapshot. Generated
 
 ### Is this a Claude Code plugin?
 
-No. The current release is a standalone Python CLI. A separate optional companion skill is planned but is not part of this bug-and-picker slice.
+No. The core remains a standalone Python CLI. An optional Claude Code companion skill is planned as a separate integration and is not included in v0.8.0.
 
 ### Is the output lossless?
 
@@ -565,7 +566,7 @@ Use this when you want Claude Code or another development tool to maintain the r
 
 ```zsh
 mkdir -p "$HOME/ClaudeWorkspace"
-git clone https://github.com/haiggoh/claude-code-transcript-distiller.git "$HOME/ClaudeWorkspace/claude-code-transcript-distiller"
+git clone https://github.com/haiggoh/Claude-Code-Transcript-Distiller.git "$HOME/ClaudeWorkspace/claude-code-transcript-distiller"
 python3 "$HOME/ClaudeWorkspace/claude-code-transcript-distiller/cc_transcript.py"
 ```
 
@@ -644,7 +645,7 @@ Do not attach raw transcripts containing secrets, proprietary source code, custo
 
 ## Current development
 
-This bug-and-picker slice covers release-version integrity, new-tail prioritization, complete-list selection, counted list expansion, navigation-key handling, continuation-first extensions, and clearer continuation semantics. A separate approved companion-skill slice will invoke the installed CLI without bundling another implementation. These are development directions until released.
+Version 0.8.0 ships the release-integrity and picker/continuation work described in the changelog. The next approved workstream is an optional Claude Code companion skill that invokes the installed `cc-transcript` CLI without bundling another implementation. The companion skill remains planned, not released.
 
 ## License
 
