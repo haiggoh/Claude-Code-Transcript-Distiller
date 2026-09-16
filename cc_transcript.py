@@ -784,9 +784,9 @@ def compact_records(
             omit_binary_payloads(record, audit, binary_seen)
         if omit_thinking:
             omit_thinking_blocks(record, audit)
-        dedupe_tool_result(record, audit)
         compact_line = len(records) + 2
         intern_exact_payloads(record, compact_line, payload_seen, audit)
+        dedupe_tool_result(record, audit)
         if outer_type(record) == "file-history-delta":
             audit.transformations["file_history_delta_records_preserved"] += 1
             audit.transformations["file_history_delta_bytes_preserved"] += len(
@@ -1586,9 +1586,9 @@ def project_format2_body(
             state_values[stream] = value
         restore_format2_tool_mirrors(record)
         omit_binary_payloads(record, audit, binary_seen)
-        dedupe_tool_result(record, audit)
         compact_line = len(projected) + 2
         intern_exact_payloads(record, compact_line, payload_seen, audit)
+        dedupe_tool_result(record, audit)
         projected.append(record)
     return projected
 
