@@ -164,9 +164,9 @@ cc-transcript --version
 ### Standalone release installer
 
 ```zsh
-curl -fLO https://github.com/haiggoh/Claude-Code-Transcript-Distiller/releases/download/v0.8.0/claude-code-transcript-distiller-installer-v0.8.0.zsh
-zsh -n claude-code-transcript-distiller-installer-v0.8.0.zsh
-zsh claude-code-transcript-distiller-installer-v0.8.0.zsh
+curl -fLO https://github.com/haiggoh/Claude-Code-Transcript-Distiller/releases/download/v0.8.1/claude-code-transcript-distiller-installer-v0.8.1.zsh
+zsh -n claude-code-transcript-distiller-installer-v0.8.1.zsh
+zsh claude-code-transcript-distiller-installer-v0.8.1.zsh
 ```
 
 The installer verifies the release archive, installs source under `~/.local/share/claude-code-transcript-distiller/current`, and creates `~/.local/bin/cc-transcript`. If `~/.local/bin` is not on `PATH`, it prints the line to add to `~/.zshrc`.
@@ -526,7 +526,7 @@ No. The source transcript is read or copied into a temporary snapshot. Generated
 
 ### Is this a Claude Code plugin?
 
-No. The core remains a standalone Python CLI. An optional Claude Code companion skill is planned as a separate integration and is not included in v0.8.0.
+No. The core remains a standalone Python CLI. An optional Claude Code companion skill is planned as a separate integration and is not included in v0.8.1.
 
 ### Is the output lossless?
 
@@ -645,7 +645,7 @@ Do not attach raw transcripts containing secrets, proprietary source code, custo
 
 ## Current development
 
-Version 0.8.0 ships the release-integrity and picker/continuation work described in the changelog. The next approved workstream is an optional Claude Code companion skill that invokes the installed `cc-transcript` CLI without bundling another implementation. The companion skill remains planned, not released.
+Version 0.8.1 fixes an ordering defect between cross-record payload interning and same-record result-mirror deduplication. Compact bundle format 3 is unchanged. The next approved workstream is an optional Claude Code companion skill that invokes the installed `cc-transcript` CLI without bundling another implementation. The companion skill remains planned, not released.
 
 ## License
 
