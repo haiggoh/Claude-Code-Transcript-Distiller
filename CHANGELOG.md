@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.8.1
+
+Payload-mirror verification defect fix.
+
+- Run cross-record payload interning before same-record tool-result mirror
+  deduplication.
+- Prevent unresolved same-record mirror markers when a later record repeats a
+  large payload that was retained in an earlier compact record.
+- Add regression coverage for the interaction between cross-record references
+  and same-record tool-result mirrors.
+- Keep compact bundle format 3 unchanged.
+
 ## 0.8.0
 
 Picker and continuation workflow improvements, plus release-integrity hardening.

@@ -172,6 +172,58 @@ class CompactionV3Tests(unittest.TestCase):
         MODULE.verify_duplicate_payload_references(records)
 
 
+    def test_cross_record_interning_precedes_same_record_mirror_deduplication(self):
+        payload = "r" * MODULE.PAYLOAD_INTERN_THRESHOLD
+        records, audit = self.compact([
+            {
+                "type":"assistant",
+                "sessionId":"s",
+                "message":{
+                    "role":"assistant",
+                    "content":[{
+                        "type":"tool_use",
+                        "id":"t1",
+                        "name":"Write",
+                        "input":{"content":payload},
+                    }],
+                },
+            },
+            {
+                "type":"user",
+                "sessionId":"s",
+                "message":{
+                    "role":"user",
+                    "content":[{
+                        "type":"tool_result",
+                        "tool_use_id":"t1",
+                        "content":payload,
+                    }],
+                },
+                "toolUseResult":{"content":payload},
+            },
+        ])
+
+        message_reference = records[2]["message"]["content"][0]["content"][
+            "__duplicate_payload__"
+        ]
+        result_reference = records[2]["toolUseResult"]["content"][
+            "__duplicate_payload__"
+        ]
+        self.assertEqual(message_reference["first_compact_line"], 2)
+        self.assertEqual(result_reference["first_compact_line"], 2)
+        self.assertEqual(audit.transformations["duplicate_payloads_referenced"], 2)
+        self.assertEqual(
+            audit.transformations["same_record_payload_mirrors_referenced"],
+            0,
+        )
+        self.assertNotIn(
+            "__duplicate_payload_mirror__",
+            MODULE.serialize_jsonl(records),
+        )
+        MODULE.verify_same_record_mirrors(records)
+        MODULE.verify_duplicate_payload_references(records)
+
+
     def test_header_title_uses_first_meaningful_prompt_fallback(self):
         records, _ = self.compact([
             {"type":"user","sessionId":"s","isMeta":True,"message":{"role":"user","content":"Internal metadata"}},
