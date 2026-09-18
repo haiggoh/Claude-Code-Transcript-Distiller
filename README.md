@@ -526,7 +526,7 @@ No. The source transcript is read or copied into a temporary snapshot. Generated
 
 ### Is this a Claude Code plugin?
 
-No. The core remains a standalone Python CLI. An optional Claude Code companion skill is planned as a separate integration and is not included in v0.8.1.
+Yes. The core is a standalone Python CLI (`cc_transcript.py`), and a companion skill (`cc-transcript`) is included that invokes the installed CLI for interactive session selection, non-interactive distillation, and flush-lag-aware handoff generation. Install the skill via the marketplace or copy `skills/cc-transcript/` into your `.claude/plugins/` directory.
 
 ### Is the output lossless?
 
@@ -645,7 +645,7 @@ Do not attach raw transcripts containing secrets, proprietary source code, custo
 
 ## Current development
 
-Version 0.8.1 fixes an ordering defect between cross-record payload interning and same-record result-mirror deduplication. Compact bundle format 3 is unchanged. The next approved workstream is an optional Claude Code companion skill that invokes the installed `cc-transcript` CLI without bundling another implementation. The companion skill remains planned, not released.
+Version 0.8.2 adds the Claude Code companion skill in `skills/cc-transcript/`, which invokes the installed `cc-transcript` CLI rather than bundling a second implementation of it. Compact bundle format 3 is unchanged from 0.8.1, which fixed an ordering defect between cross-record payload interning and same-record result-mirror deduplication.
 
 ## License
 

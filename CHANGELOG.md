@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.8.2
+
+### Added — a cc-transcript companion skill
+
+- `skills/cc-transcript/` — a skill that invokes the *installed* CLI rather than bundling a copy of
+  it, so it cannot drift from the version actually on the machine. It documents the two behaviours
+  that mislead people: the picker selects the LARGEST recent transcript rather than the newest, and
+  the final turn may not be flushed to disk yet, so a mid-session capsule can legitimately be
+  missing the last exchange.
+- The README's "Is this a Claude Code plugin?" answer is now Yes, with the skill described.
+
+### Fixed
+
+- The skill as first written documented an interface this CLI does not have: `--since`, `--id` and
+  `--format capsule|compact|both` are not flags it accepts, `pipx install` / `pip install -e .` are
+  not supported install routes (there is no packaging metadata — installation is Homebrew or the
+  release installer), and the artifact names and default output directory were both wrong
+  (`~/.claude/compacted-sessions`, `<base>.indexed_capsule.md`, `<base>.compact.jsonl.txt`). Every
+  invocation and filename in the skill is now verified against the real CLI end-to-end.
+- `VERSION` was left at 0.8.1 while the changelog already announced 0.8.2 — caught by this repo's
+  own `test_packaged_version_matches_the_latest_release_entry`, which is exactly its job.
+
 ## 0.8.1
 
 Payload-mirror verification defect fix.
