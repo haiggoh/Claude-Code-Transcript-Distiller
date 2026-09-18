@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.8.3
+
+### Fixed — the 0.8.2 release could not actually deliver 0.8.2
+
+v0.8.2 was tagged before the release was built, and building it surfaced defects that made the
+release unable to ship its own headline feature. The tag is published and therefore left alone;
+these are the corrections.
+
+- **The release archive did not contain the skill this release is about.** `FILES` in
+  `scripts/build-release.py` was never extended, so a consumer installing 0.8.2 would have got the
+  CLI plus a changelog announcing a companion skill that was not there. The builder's test fixture
+  duplicated that file list rather than deriving it, so the fixture — not the builder — was what
+  broke when the list grew; it now parses `FILES` from the builder.
+- **`scripts/build-release.py --help` and the generated installer's `--help` both ignored the flag
+  and did the work.** The builder reported a bogus version mismatch; the installer went straight to
+  `curl` and printed a 404 that looked like the help itself had failed. Both now parse arguments
+  first and exit 2 on an unknown flag.
+- The installer's local-archive escape hatch was misspelled `CC_TRANSSCRIPT_ARCHIVE`. It is now
+  `CC_TRANSCRIPT_ARCHIVE`, documented in `--help`, with the old name still accepted.
+
+### Notes
+
+- README installer URLs now point at v0.8.3. They are deliberately bumped only once the matching
+  release exists — a documented install route that 404s is worse than a stale version number.
+
 ## 0.8.2
 
 ### Added — a cc-transcript companion skill
@@ -21,7 +46,6 @@
   invocation and filename in the skill is now verified against the real CLI end-to-end.
 - `VERSION` was left at 0.8.1 while the changelog already announced 0.8.2 — caught by this repo's
   own `test_packaged_version_matches_the_latest_release_entry`, which is exactly its job.
-
 ## 0.8.1
 
 Payload-mirror verification defect fix.

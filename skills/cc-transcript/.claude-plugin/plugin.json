@@ -1,6 +1,6 @@
 {
   "name": "cc-transcript",
-  "version": "0.8.2",
+  "version": "0.8.3",
   "description": "Claude Code companion skill for the Claude Code Transcript Distiller (cc_transcript.py). Distills native session transcripts into compact capsules for external-LLM handoff, code review, or archival. Invokes the installed CLI — no bundled script copy.",
   "author": {
     "name": "Heiko Brantsch"

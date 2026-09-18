@@ -164,9 +164,9 @@ cc-transcript --version
 ### Standalone release installer
 
 ```zsh
-curl -fLO https://github.com/haiggoh/Claude-Code-Transcript-Distiller/releases/download/v0.8.1/claude-code-transcript-distiller-installer-v0.8.1.zsh
-zsh -n claude-code-transcript-distiller-installer-v0.8.1.zsh
-zsh claude-code-transcript-distiller-installer-v0.8.1.zsh
+curl -fLO https://github.com/haiggoh/Claude-Code-Transcript-Distiller/releases/download/v0.8.3/claude-code-transcript-distiller-installer-v0.8.3.zsh
+zsh -n claude-code-transcript-distiller-installer-v0.8.3.zsh
+zsh claude-code-transcript-distiller-installer-v0.8.3.zsh
 ```
 
 The installer verifies the release archive, installs source under `~/.local/share/claude-code-transcript-distiller/current`, and creates `~/.local/bin/cc-transcript`. If `~/.local/bin` is not on `PATH`, it prints the line to add to `~/.zshrc`.
@@ -645,7 +645,7 @@ Do not attach raw transcripts containing secrets, proprietary source code, custo
 
 ## Current development
 
-Version 0.8.2 adds the Claude Code companion skill in `skills/cc-transcript/`, which invokes the installed `cc-transcript` CLI rather than bundling a second implementation of it. Compact bundle format 3 is unchanged from 0.8.1, which fixed an ordering defect between cross-record payload interning and same-record result-mirror deduplication.
+Version 0.8.3 ships the Claude Code companion skill added in 0.8.2 — whose release archive did not contain it in `skills/cc-transcript/`, which invokes the installed `cc-transcript` CLI rather than bundling a second implementation of it. Compact bundle format 3 is unchanged from 0.8.1, which fixed an ordering defect between cross-record payload interning and same-record result-mirror deduplication.
 
 ## License
 

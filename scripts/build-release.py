@@ -21,9 +21,33 @@ def source_version() -> str:
     return match.group(1)
 
 
+USAGE = """build-release.py — build the release archive and installer for this version.
+
+Reads VERSION from cc_transcript.py (the single source of truth) and writes into dist/:
+  claude-code-transcript-distiller-<version>.tar.gz
+  claude-code-transcript-distiller-installer-v<version>.zsh
+plus their checksums.
+
+Usage:
+  scripts/build-release.py            build at the source's own version
+  scripts/build-release.py VERSION    build, asserting VERSION matches the source
+  scripts/build-release.py --help     show this text
+
+Takes no environment variables. Writes only under dist/.
+"""
+
+# Parse arguments BEFORE doing any work. This script previously treated `--help` as a
+# requested VERSION and failed with a version-mismatch message, which both hid the usage
+# text and made a help probe look like a build error.
+if any(a in ("--help", "-h") for a in sys.argv[1:]):
+    print(USAGE)
+    raise SystemExit(0)
+
 SOURCE_VERSION = source_version()
 if len(sys.argv) > 2:
-    raise SystemExit("FAIL: usage: build-release.py [VERSION]")
+    sys.stderr.write("build-release.py: too many arguments\n"
+                     "usage: scripts/build-release.py [VERSION] | --help\n")
+    raise SystemExit(2)
 if len(sys.argv) == 2 and sys.argv[1] != SOURCE_VERSION:
     raise SystemExit(
         f"FAIL: requested version {sys.argv[1]} does not match "
@@ -38,6 +62,11 @@ FILES = [
     "LICENSE",
     "CHANGELOG.md",
     "docs/compact-format-3.md",
+    # The companion skill is part of what 0.8.2 ships, so it must travel in the archive.
+    # Omitting it meant a consumer installing the release got the CLI and a changelog
+    # announcing a skill that was not there.
+    "skills/cc-transcript/SKILL.md",
+    "skills/cc-transcript/.claude-plugin/plugin.json",
 ]
 DIST.mkdir(exist_ok=True)
 archive = DIST / f"{PREFIX}.tar.gz"
@@ -61,11 +90,41 @@ set -e
 version="{VERSION}"
 expected_sha="{archive_sha}"
 url="https://github.com/haiggoh/Claude-Code-Transcript-Distiller/releases/download/v{VERSION}/claude-code-transcript-distiller-{VERSION}.tar.gz"
+
+# Parse arguments BEFORE touching the network. Probing an unfamiliar installer with --help
+# must not START the install: this script used to fall straight through to curl, so the
+# probe both downloaded and printed a 404 that looked like the help had failed.
+if [[ "${{1:-}}" == "--help" || "${{1:-}}" == "-h" ]]; then
+  print "claude-code-transcript-distiller installer v$version"
+  print ""
+  print "Downloads the v$version release archive, verifies it against a pinned SHA-256,"
+  print "installs the source under ~/.local/share/claude-code-transcript-distiller/current"
+  print "and creates the ~/.local/bin/cc-transcript launcher."
+  print ""
+  print "Usage:"
+  print "  claude-code-transcript-distiller-installer-v$version.zsh          install"
+  print "  claude-code-transcript-distiller-installer-v$version.zsh --help   show this text"
+  print ""
+  print "Environment:"
+  print "  CC_TRANSCRIPT_ARCHIVE   install from a local archive instead of downloading"
+  print ""
+  print "Writes only under ~/.local. Verify first with: zsh -n <this file>"
+  exit 0
+fi
+if [[ -n "${{1:-}}" ]]; then
+  print -u2 "FAIL: unknown argument: $1"
+  print -u2 "usage: claude-code-transcript-distiller-installer-v$version.zsh [--help]"
+  exit 2
+fi
+
 tmp="$(mktemp -d "${{TMPDIR:-/tmp}}/cc-transcript.XXXXXX")"
 trap 'rm -rf "$tmp"' EXIT
 archive="$tmp/bundle.tar.gz"
-if [[ -n "${{CC_TRANSSCRIPT_ARCHIVE:-}}" ]]; then
-  cp "$CC_TRANSSCRIPT_ARCHIVE" "$archive"
+# CC_TRANSSCRIPT_ARCHIVE (double S) was the original misspelling; accepted so an existing
+# caller does not break, but CC_TRANSCRIPT_ARCHIVE is the documented name.
+local_archive="${{CC_TRANSCRIPT_ARCHIVE:-${{CC_TRANSSCRIPT_ARCHIVE:-}}}}"
+if [[ -n "$local_archive" ]]; then
+  cp "$local_archive" "$archive"
   print "PASS: using local release archive."
 elif curl -fL --retry 3 -o "$archive" "$url"; then
   print "PASS: downloaded Claude Code Transcript Distiller v$version."

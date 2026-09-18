@@ -11,6 +11,20 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 
+def builder_files() -> list[str]:
+    """The FILES list the builder actually packages, parsed from the builder itself.
+
+    Kept derived rather than duplicated: a copy of this list in the test is a version
+    literal by another name, and it goes stale the moment the builder's list changes.
+    """
+    text = (ROOT / "scripts/build-release.py").read_text(encoding="utf-8")
+    block = re.search(r'^FILES = \[(.*?)^\]', text, re.MULTILINE | re.DOTALL)
+    assert block, "build-release.py must declare a FILES list"
+    names = re.findall(r'"([^"]+)"', block.group(1))
+    assert names, "the builder's FILES list must not be empty"
+    return names
+
+
 def packaged_version() -> str:
     text = (ROOT / "cc_transcript.py").read_text(encoding="utf-8")
     match = re.search(r'^VERSION\s*=\s*"([^"]+)"', text, re.MULTILINE)
@@ -23,11 +37,15 @@ class ReleaseBuilderTests(unittest.TestCase):
         """Run the builder against a copy of the repo and return its dist directory."""
         workspace = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, workspace)
-        for name in ("cc_transcript.py", "README.md", "LICENSE", "CHANGELOG.md"):
-            shutil.copy2(ROOT / name, workspace / name)
-        (workspace / "docs").mkdir()
-        shutil.copy2(ROOT / "docs/compact-format-3.md", workspace / "docs/compact-format-3.md")
-        (workspace / "scripts").mkdir()
+        # Stage exactly what the builder declares it packages, READ FROM THE BUILDER, rather
+        # than a second hardcoded list here. The duplicate list silently broke this fixture
+        # the moment FILES gained the companion skill: the builder was correct and the test
+        # failed, which points the blame at the wrong place.
+        for name in builder_files():
+            dest = workspace / name
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(ROOT / name, dest)
+        (workspace / "scripts").mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / "scripts/build-release.py", workspace / "scripts/build-release.py")
         subprocess.run(
             [sys.executable, "scripts/build-release.py", *args],
