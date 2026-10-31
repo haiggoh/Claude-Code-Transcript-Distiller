@@ -164,9 +164,9 @@ cc-transcript --version
 ### Standalone release installer
 
 ```zsh
-curl -fLO https://github.com/haiggoh/Claude-Code-Transcript-Distiller/releases/download/v0.8.3/claude-code-transcript-distiller-installer-v0.8.3.zsh
-zsh -n claude-code-transcript-distiller-installer-v0.8.3.zsh
-zsh claude-code-transcript-distiller-installer-v0.8.3.zsh
+curl -fLO https://github.com/haiggoh/Claude-Code-Transcript-Distiller/releases/download/v0.8.4/claude-code-transcript-distiller-installer-v0.8.4.zsh
+zsh -n claude-code-transcript-distiller-installer-v0.8.4.zsh
+zsh claude-code-transcript-distiller-installer-v0.8.4.zsh
 ```
 
 The installer verifies the release archive, installs source under `~/.local/share/claude-code-transcript-distiller/current`, and creates `~/.local/bin/cc-transcript`. If `~/.local/bin` is not on `PATH`, it prints the line to add to `~/.zshrc`.
