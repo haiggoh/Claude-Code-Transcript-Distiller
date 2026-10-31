@@ -69,3 +69,7 @@ redundancy, not secrets — so inspect a capsule before sharing it anywhere.
 - `audit-loose-ends` — its transcript scan answers "what did this session change?" cheaply; reach
   for the distiller instead when the whole context must travel.
 - `resume-interrupted` — recovers a cut-off session; a capsule preserves what it recovered.
+
+## Branding (⚗️)
+
+When you begin working under this skill, lead your first substantive reply with `⚗️ cc-transcript:` so the user can see which plugin just became active.

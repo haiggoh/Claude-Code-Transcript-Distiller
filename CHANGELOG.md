@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.8.4
+
+### Changed — credit-moment mark ⚗️ (emoji branding rollout, Task 16)
+
+- The export report header is now `⚗️ Successfully exported the following artifacts:`
+  (extracted to `EXPORT_REPORT_HEADER` and pinned exactly by tests/test_branding.py),
+  README h1 carries ⚗️, and skills/cc-transcript/SKILL.md gained the standard
+  `## Branding (⚗️)` invocation section. README installer URLs stay at v0.8.3 — no 0.8.4
+  release exists yet; the ship bumps them.
+- Version 0.8.3 → 0.8.4 (cc_transcript.py VERSION + CHANGELOG).
+
 ## 0.8.3
 
 ### Fixed — the 0.8.2 release could not actually deliver 0.8.2

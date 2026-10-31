@@ -41,7 +41,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
-VERSION = "0.8.3"
+VERSION = "0.8.4"
+EXPORT_REPORT_HEADER = "⚗️ Successfully exported the following artifacts:"
 BUNDLE_FORMAT = 3
 PAYLOAD_INTERN_THRESHOLD = 1_000
 CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
@@ -2657,7 +2658,7 @@ def print_batch_summary(results: list[tuple[Path, str, list[Path]]]) -> None:
     exported = [item for item in results if item[2]]
     unchanged = [item for item in results if not item[2]]
     if exported:
-        print("\nSuccessfully exported the following artifacts:")
+        print("\n" + EXPORT_REPORT_HEADER)
         for source, summary, artifacts in exported:
             print(f"\n  {source.stem}: {summary}")
             for artifact in artifacts:
