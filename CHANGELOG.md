@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.8.4 — 2026-11-15 — Wave C: nested portable package + version mapping
+## 0.8.4
 
 - The publishable plugin is the nested `skills/cc-transcript/` package (own manifest);
   the plugin version now tracks the CLI version (cc_transcript.py VERSION = 0.8.4), and
@@ -12,7 +12,6 @@
   in Chat/Cowork (no Homebrew) it is guidance-only — reduced-useful, never a false pass.
 - Root `rtc-ship.json` points the ship loop at the nested manifest.
 
-## 0.8.4
 
 ### Changed — credit-moment mark ⚗️ (emoji branding rollout, Task 16)
 
