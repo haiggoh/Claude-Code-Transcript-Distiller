@@ -132,7 +132,7 @@ def write_build_json(dest, root, commit_override, repo_override=None):
         "builder": BUILDER, "builder_version": BUILDER_VERSION,
         "transform_version": TRANSFORM_VERSION, "files": files, "components": COMPONENTS,
         "external_dependencies": [{
-            "name": "cc_transcript.py CLI", "version": _cli_version(root),
+            "name": "cc_transcript.py CLI", "version": _cli_version(root), "plugin_version": plugin_version,
             "install": "host-only (Homebrew haiggoh/tap/claude-code-transcript-distiller); "
                        "plugin version tracks it (both 0.8.4)",
             "surfaces": {"chat": False, "cowork": False, "code": True},

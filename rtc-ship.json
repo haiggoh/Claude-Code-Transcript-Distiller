@@ -1,6 +1,6 @@
 {
   "_comment": "How rtc-ship.sh ships THIS repo. The publishable plugin is the NESTED skills/cc-transcript/ package (its own manifest); the root also ships the cc_transcript.py CLI via build-release.py separately. No plugin refresh: source-only install state.",
-  "tag_prefix": "v",
+  "tag_prefix": "cc-transcript-v",
   "default_branch": "main",
   "manifest": "skills/cc-transcript/.claude-plugin/plugin.json",
   "changelog": "CHANGELOG.md",
