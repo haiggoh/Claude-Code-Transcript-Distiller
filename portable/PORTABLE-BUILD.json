@@ -1,0 +1,50 @@
+{
+  "builder": "scripts/build-portable.py",
+  "builder_version": "1.0.0",
+  "components": [
+    {
+      "adaptation_class": "mechanical",
+      "evidence_level": "source-inspected",
+      "kind": "manifest",
+      "notes": "same name+version as the nested host manifest; an installed marketplace plugin wins over a synced copy in Code, so no double-run",
+      "path": ".claude-plugin/plugin.json",
+      "surfaces": {
+        "chat": true,
+        "code": true,
+        "cowork": true
+      }
+    },
+    {
+      "adaptation_class": "native-unchanged",
+      "evidence_level": "source-inspected",
+      "kind": "skill",
+      "notes": "invokes the HOST-installed cc_transcript.py CLI (external dependency); in Chat/Cowork there is no Homebrew \u2014 the skill says so instead of faking a distill",
+      "path": "SKILL.md",
+      "surfaces": {
+        "chat": "guidance-only (no host CLI)",
+        "code": true,
+        "cowork": "guidance-only (no host CLI)"
+      }
+    }
+  ],
+  "external_dependencies": [
+    {
+      "install": "host-only (Homebrew haiggoh/tap/claude-code-transcript-distiller); plugin version tracks it (both 0.8.4)",
+      "name": "cc_transcript.py CLI",
+      "surfaces": {
+        "chat": false,
+        "code": true,
+        "cowork": false
+      },
+      "version": "0.8.4"
+    }
+  ],
+  "files": {
+    ".claude-plugin/plugin.json": "c91097978795a777f65630c01ef2c3a24e3d5c640d2abbe5a28b40a51ca4f22c",
+    "SKILL.md": "2d0e226004c1ff6277bad18a50f48410353d6b04d46de351a943eae0cf1a59ca"
+  },
+  "schema": "haiggoh-portable-build/1",
+  "source_commit": "bc763cd37f2d06b36631348152c913d1a2557595",
+  "source_repo": "haiggoh/Claude-Code-Transcript-Distiller",
+  "transform_version": "1"
+}

@@ -1,6 +1,6 @@
 ---
 name: cc-transcript
-description: Distill a native Claude Code session transcript into a compact, line-addressable capsule for handoff to another model, for code review, or for archival. Use when a session is too long to re-read or to resume, when context must be carried into a fresh session or an external LLM, or when the user asks to compact, capsule, distill, or hand off a transcript. Invokes the installed cc-transcript CLI.
+description: Distill a native Claude Code session transcript into a compact, line-addressable capsule for handoff to another model, for code review, or for archival. Use when a session is too long to re-read or to resume, when context must be carried into a fresh session or an external LLM, or when the user asks to compact, capsule, distill, or hand off a transcript. Invokes the installed cc-transcript CLI (host-only: installed via Homebrew; in Chat/Cowork there is no Homebrew, so the skill is guidance-only there — say that, never fake a distill).
 ---
 
 # cc-transcript — transcript distillation for handoff and review
