@@ -1,9 +1,11 @@
 {
-  "_comment": "How rtc-ship.sh ships THIS repo. The publishable plugin is the NESTED skills/cc-transcript/ package (its own manifest); the root also ships the cc_transcript.py CLI via build-release.py separately. No plugin refresh: source-only install state.",
-  "tag_prefix": "cc-transcript-v",
+  "_comment": "How rtc-ship.sh ships THIS repo. The publishable plugin is the NESTED skills/cc-transcript/ package (its own manifest); the release also carries the cc_transcript.py CLI assets built by .rtc/pre-package.sh (scripts/build-release.py), so the Homebrew tap's bump-formulas auto-bump picks up every release. tag_prefix is bare v again: the cc-transcript-v prefix only existed to avoid colliding with the existing v0.8.4 tag while the version surfaces still read 0.8.4 (commit d5aef9f); all surfaces are unified at 0.9.0 now, and the tap bump only accepts v<version> tags. No plugin refresh: source-only install state.",
+  "tag_prefix": "v",
   "default_branch": "main",
   "manifest": "skills/cc-transcript/.claude-plugin/plugin.json",
   "changelog": "CHANGELOG.md",
   "test_cmd": "pytest -q tests/",
-  "require_default_branch_checkout": true
+  "require_default_branch_checkout": true,
+  "_comment_assets": "Built by .rtc/pre-package.sh, which wipes dist/claude-code-transcript-distiller-* and dist/SHA256SUMS before building, so these globs match exactly the current release. rtc-ship fails the ship when a glob matches nothing or a version-bearing asset name carries a different version.",
+  "assets": "dist/claude-code-transcript-distiller-*.tar.gz dist/claude-code-transcript-distiller-installer-*.zsh dist/SHA256SUMS"
 }
