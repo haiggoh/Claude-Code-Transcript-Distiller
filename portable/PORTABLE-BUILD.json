@@ -31,21 +31,21 @@
     {
       "install": "host-only (Homebrew haiggoh/tap/claude-code-transcript-distiller); plugin version tracks it (both 0.8.4)",
       "name": "cc_transcript.py CLI",
-      "plugin_version": "0.8.4",
+      "plugin_version": "0.9.0",
       "surfaces": {
         "chat": false,
         "code": true,
         "cowork": false
       },
-      "version": "0.8.4"
+      "version": "0.9.0"
     }
   ],
   "files": {
-    ".claude-plugin/plugin.json": "c91097978795a777f65630c01ef2c3a24e3d5c640d2abbe5a28b40a51ca4f22c",
-    "SKILL.md": "2d0e226004c1ff6277bad18a50f48410353d6b04d46de351a943eae0cf1a59ca"
+    ".claude-plugin/plugin.json": "e23aa6ade1324748ee1a97e695571909083ae10003efd5218dd405fc34e82394",
+    "SKILL.md": "6da2ab170da9e320e0f4c21860ceaa02a06e80666e6fda4f3066e677ef0dc0c2"
   },
   "schema": "haiggoh-portable-build/1",
-  "source_commit": "51a73407da9cc19308aee531f032c7389cc49594",
+  "source_commit": "d5aef9f008a5406dc46825b9c91648ccd20e9835",
   "source_repo": "haiggoh/Claude-Code-Transcript-Distiller",
   "transform_version": "1"
 }

@@ -300,6 +300,20 @@ cc-transcript --current
 
 `--current` attempts an environment-ID match and then uses a bounded recency-and-size fallback within the current project.
 
+### Find a session by its window name
+
+```zsh
+cc-transcript --find '📡 Z.ai GLM 5.3 Flash · 55'   # look up only; writes nothing
+cc-transcript '📡 Z.ai GLM 5.3 Flash · 55'          # resolve the name, then distill it
+```
+
+The window name is stored only as the transcript's custom title (JSON-escaped, so a text grep
+for it finds nothing). An exact title match wins over a prefix match, so a resumed fork with a
+collision suffix (`· 55-abundant-gadget`) never shadows the session you named; several matches
+are listed, never guessed between (exit 2). `--find` also reports each match's resumed FORKS
+(transcripts sharing its message history), the fork point, and how many records exist only on
+each side, plus whether each session is still live (pid + start time in `~/.claude/sessions`).
+
 ### Choose another output directory
 
 ```zsh
@@ -477,8 +491,9 @@ Unexplained differences remain blocked.
 
 ## Command reference
 ```text
-cc_transcript.py [INPUT]
+cc_transcript.py [INPUT | SESSION-NAME]
 
+  --find NAME
   --current
   -o, --output-dir DIRECTORY
   --base-name NAME

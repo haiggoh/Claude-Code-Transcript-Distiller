@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.9.0
+
+- **Find a session by its window name.** `--find NAME` looks sessions up by their custom title
+  (the `📡 <model> · <tag>` window name) and prints id, live/exited, last activity and path,
+  without writing anything. The positional input also accepts a name. Exact title matches win
+  over prefix matches; several matches are listed and refused (exit 2), never guessed between.
+- **Resumed forks are reported.** A resumed session is a new id whose file copies the original
+  history. `--find` lists each fork (transcripts sharing >= 20 message uuids in the same project
+  folder) with its fork point and the records unique to each side, so the dead copy's own tail
+  is visible at once.
+- Liveness comes from the live-session registry, and counts only when the pid's start time
+  matches the recorded `procStart` (pids are recycled).
+
 ## 0.8.4
 
 - The publishable plugin is the nested `skills/cc-transcript/` package (own manifest);

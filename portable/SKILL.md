@@ -29,6 +29,8 @@ the authoritative raw evidence — never delete it on the strength of a capsule.
 cc-transcript                 # interactive picker (needs a TTY)
 cc-transcript --current       # the CURRENTLY RUNNING session, no TTY required
 cc-transcript <path.jsonl>    # an explicit transcript
+cc-transcript --find '<window name>'   # name -> id, live/exited, resumed forks; writes nothing
+cc-transcript '<window name>'          # resolve by name (exact before prefix), then distill
 cc-transcript --current -o /tmp/out
 ```
 

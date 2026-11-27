@@ -41,11 +41,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
-VERSION = "0.8.4"
+VERSION = "0.9.0"
 EXPORT_REPORT_HEADER = "⚗️ Successfully exported the following artifacts:"
 BUNDLE_FORMAT = 3
 PAYLOAD_INTERN_THRESHOLD = 1_000
 CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
+CLAUDE_SESSIONS_DIR = Path.home() / ".claude" / "sessions"  # live-session registry, <pid>.json
 DEFAULT_OUTPUT_DIR = Path.home() / ".claude" / "compacted-sessions"
 HOISTED_FIELDS = ["sessionId", "version", "gitBranch", "cwd", "entrypoint"]
 NOISE_TYPE_SUBTYPE = {
@@ -1966,6 +1967,194 @@ def resolve_session_label(
     return resolve_picker_metadata(path, limit).label
 
 
+# --- find a session by its window NAME ---------------------------------------------------------
+# The window name ("📡 <model> · <tag>") is persisted only as custom-title records, JSON-escaped
+# (the "·" is written as ·), so a text grep for the name finds nothing. A RESUMED session is
+# a fork: a new id whose file copies the original history (same message uuids), and a fork
+# launched while the name was taken gets a collision suffix ("· 55-abundant-gadget").
+
+FORK_MIN_SHARED = 20  # shared message uuids before two transcripts count as fork relatives
+
+
+def session_custom_title(path: Path) -> str:
+    """Latest custom-title of a transcript ('' when none); reads only custom-title lines."""
+    title = ""
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            for raw in handle:
+                if '"custom-title"' not in raw:
+                    continue
+                try:
+                    record = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(record, dict) and outer_type(record) == "custom-title":
+                    title = _title_text(record, "customTitle", "custom_title") or title
+    except OSError:
+        pass
+    return title
+
+
+def _norm_title(value: str) -> str:
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def find_sessions_by_name(name: str, projects_dir: Path | None = None) -> tuple[str, list[Path]]:
+    """('exact'|'prefix'|'none', matches). Exact title matches win; prefix matches are reported
+    only when no exact match exists. Several matches are all returned, never guessed between."""
+    root = projects_dir if projects_dir is not None else CLAUDE_PROJECTS_DIR
+    wanted = _norm_title(name)
+    exact: list[Path] = []
+    prefix: list[Path] = []
+    for path in sorted(root.glob("*/*.jsonl")):
+        title = _norm_title(session_custom_title(path))
+        if not title:
+            continue
+        if title == wanted:
+            exact.append(path)
+        elif title.startswith(wanted):
+            prefix.append(path)
+    if exact:
+        return "exact", exact
+    if prefix:
+        return "prefix", prefix
+    return "none", []
+
+
+def _message_uuids(path: Path) -> list[tuple[str, str]]:
+    """(uuid, timestamp) of every user/assistant record, in file order."""
+    out: list[tuple[str, str]] = []
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            for raw in handle:
+                if '"uuid"' not in raw:
+                    continue
+                try:
+                    record = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                if (isinstance(record, dict) and record.get("uuid")
+                        and record.get("type") in ("user", "assistant")):
+                    out.append((str(record["uuid"]), str(record.get("timestamp") or "")))
+    except OSError:
+        pass
+    return out
+
+
+@dataclass
+class ForkInfo:
+    path: Path
+    title: str
+    fork_point: str  # newest timestamp the two transcripts share
+    target_only: int  # records in the target after the fork point that the fork lacks
+    other_only: int  # records in the fork it does not share with the target
+
+
+def find_forks(path: Path, min_shared: int = FORK_MIN_SHARED) -> list[ForkInfo]:
+    """Transcripts in the same project folder that share >= min_shared message uuids with path."""
+    target = _message_uuids(path)
+    ids = {uuid for uuid, _ in target}
+    first = min((ts for _, ts in target if ts), default="")
+    forks: list[ForkInfo] = []
+    for other in sorted(path.parent.glob("*.jsonl")):
+        if other == path:
+            continue
+        if first:  # a fork is created after the target's first record — skip older files cheaply
+            modified = datetime.fromtimestamp(other.stat().st_mtime, timezone.utc)
+            if modified.strftime("%Y-%m-%dT%H:%M:%S") < first[:19]:
+                continue
+        theirs = _message_uuids(other)
+        shared = [ts for uuid, ts in theirs if uuid in ids]
+        if len(shared) < min_shared:
+            continue
+        their_ids = {uuid for uuid, _ in theirs}
+        point = max(shared)
+        forks.append(ForkInfo(
+            path=other,
+            title=session_custom_title(other),
+            fork_point=point,
+            target_only=sum(1 for uuid, ts in target if uuid not in their_ids and ts > point),
+            other_only=sum(1 for uuid, _ in theirs if uuid not in ids),
+        ))
+    return forks
+
+
+def session_liveness(session_id: str, sessions_dir: Path | None = None) -> str:
+    """'live' | 'exited' | 'unknown' from the live-session registry. A pid only counts when its
+    start time matches the registry's procStart (UTC) — pids are recycled."""
+    directory = sessions_dir if sessions_dir is not None else CLAUDE_SESSIONS_DIR
+    for entry in sorted(directory.glob("*.json")):
+        try:
+            data = json.loads(entry.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(data, dict) or data.get("sessionId") != session_id:
+            continue
+        pid = data.get("pid")
+        if not isinstance(pid, int):
+            return "unknown"
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return "exited"
+        except PermissionError:
+            pass
+        recorded = data.get("procStart")
+        if not isinstance(recorded, str):
+            return "unknown"
+        try:
+            started = subprocess.run(
+                ["ps", "-o", "lstart=", "-p", str(pid)], capture_output=True, text=True,
+                timeout=5, check=False, env={**os.environ, "LC_ALL": "C", "TZ": "UTC"},
+            ).stdout
+        except (OSError, subprocess.SubprocessError):
+            return "unknown"
+        return "live" if " ".join(started.split()) == " ".join(recorded.split()) else "exited"
+    return "exited"
+
+
+def _last_timestamp(path: Path) -> str:
+    stamps = [ts for _, ts in _message_uuids(path) if ts]
+    return max(stamps) if stamps else "?"
+
+
+def print_find_report(name: str) -> int:
+    kind, matches = find_sessions_by_name(name)
+    if not matches:
+        print(f"No session is titled {name!r} under {CLAUDE_PROJECTS_DIR}.", file=sys.stderr)
+        return 1
+    for path in matches:
+        print(f"{kind:<6} {path.stem}  {session_liveness(path.stem)}  last {_last_timestamp(path)}")
+        print(f"       title: {session_custom_title(path)}")
+        print(f"       {path}")
+        for fork in find_forks(path):
+            print(f"  fork {fork.path.stem}  {session_liveness(fork.path.stem)}  {fork.title or '(untitled)'}")
+            print(f"       fork-point {fork.fork_point}  only-in-{path.stem[:8]}: {fork.target_only}"
+                  f"  only-in-fork: {fork.other_only}")
+    return 0
+
+
+def resolve_input_argument(value: Path) -> tuple[Path | None, int]:
+    """A positional input is a transcript path, or else a session window name."""
+    candidate = value.expanduser()
+    if candidate.exists():
+        return candidate.resolve(), 0
+    name = str(value)
+    kind, matches = find_sessions_by_name(name)
+    if not matches:
+        print(f"Error: {name!r} is not a file, and no session is titled that under "
+              f"{CLAUDE_PROJECTS_DIR}.", file=sys.stderr)
+        return None, 1
+    if len(matches) > 1:
+        print(f"Error: {len(matches)} sessions match {name!r} ({kind}); pass one path:",
+              file=sys.stderr)
+        for path in matches:
+            print(f"  {path}  ({session_custom_title(path)})", file=sys.stderr)
+        return None, 2
+    print(f"Resolved name via custom-title ({kind})  ->  {matches[0].name}")
+    return matches[0], 0
+
+
 def picker_project_name(cwd: str) -> str:
     """Return a concise project name, omitting the user's home directory."""
     if not cwd:
@@ -2484,7 +2673,15 @@ def find_current_session_file() -> tuple[Path | None, str | None]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("input", nargs="?", type=Path, help="Raw Claude Code session JSONL")
+    parser.add_argument("input", nargs="?", type=Path,
+                        help="Raw Claude Code session JSONL, or a session's window name "
+                             "(custom title, e.g. '📡 <model> · 55'; exact match first, then prefix)")
+    parser.add_argument(
+        "--find",
+        metavar="NAME",
+        help="Look up sessions by window name and exit without writing: id, live/exited, last "
+             "activity, path, and resumed forks (fork point + records unique to each side).",
+    )
     parser.add_argument(
         "--current",
         action="store_true",
@@ -2687,6 +2884,12 @@ def main() -> int:
     if args.current and args.input is not None:
         print("Error: --current takes no input path.", file=sys.stderr)
         return 2
+    find_name = getattr(args, "find", None)
+    if find_name is not None:
+        if args.current or args.input is not None:
+            print("Error: --find takes no input path and no --current.", file=sys.stderr)
+            return 2
+        return print_find_report(find_name)
     if args.keep_base64 and args.truncate_base64:
         print("Error: --keep-base64 conflicts with --truncate-base64.", file=sys.stderr)
         return 2
@@ -2700,7 +2903,10 @@ def main() -> int:
         print(f"Resolved current session via: {method}  ->  {input_path.name}")
         batches = [[input_path]]
     elif args.input is not None:
-        batches = [[args.input.expanduser().resolve()]]
+        resolved, code = resolve_input_argument(args.input)
+        if resolved is None:
+            return code
+        batches = [[resolved]]
     else:
         batches = []
 
